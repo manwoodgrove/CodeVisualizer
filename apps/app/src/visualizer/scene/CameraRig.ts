@@ -12,11 +12,12 @@ export class CameraRig {
   readonly entity: pc.Entity;
   private camera: pc.CameraComponent;
 
-  // Orbit state
+  // Orbit state — default pitch angled down onto the plane so the grid and
+  // arcing edges read like the reference isometric art.
   private focus = new pc.Vec3(0, 0, 0);
-  private distance = 300;
-  private yaw = 0;   // degrees
-  private pitch = 30; // degrees
+  private distance = 260;
+  private yaw = 25;   // degrees
+  private pitch = 38; // degrees
 
   // Fly-to tween state
   private tweening = false;
@@ -46,7 +47,8 @@ export class CameraRig {
 
     this.entity = new pc.Entity('CameraRig');
     const cam = this.entity.addComponent('camera', {
-      clearColor: new pc.Color(0.04, 0.05, 0.08, 1),
+      // Deep navy/indigo — the grid + node emissives pop against this.
+      clearColor: new pc.Color(0.02, 0.025, 0.06, 1),
       fov: 50,
       farClip: 5000,
       nearClip: 0.5,

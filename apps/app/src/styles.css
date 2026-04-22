@@ -16,19 +16,19 @@
   --danger:         #f85149;
   --mono:           'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 
-  /* node kind colors */
-  --color-module:    #79c0ff;
-  --color-class:     #ffa657;
-  --color-function:  #7ee787;
-  --color-method:    #56d364;
-  --color-variable:  #d2a8ff;
+  /* node kind colors — neon palette (matches visualizer materials) */
+  --color-module:    #22d3ff;
+  --color-class:     #f472ff;
+  --color-function:  #39ff7a;
+  --color-method:    #5af0e6;
+  --color-variable:  #ffb648;
 
   /* edge kind colors */
-  --color-import:      #388bfd;
-  --color-call:        #3fb950;
-  --color-inheritance: #ffa657;
-  --color-data-flow:   #d2a8ff;
-  --color-export:      #79c0ff;
+  --color-import:      #22d3ff;
+  --color-call:        #39ff7a;
+  --color-inheritance: #ffb648;
+  --color-data-flow:   #f472ff;
+  --color-export:      #c4b5fd;
 }
 
 *, *::before, *::after {
