@@ -10,12 +10,15 @@ function hexToColor(hex: string): pc.Color {
   return new pc.Color(r, g, b);
 }
 
+// Vibrant neon palette inspired by the reference art — each kind reads as a
+// distinct glowing "chip" on the grid plane. Brightness is intentionally high
+// so the emissive material carries the look even without post-processing.
 const NODE_COLORS: Record<NodeKind, string> = {
-  MODULE: '#1E3A8A',
-  CLASS: '#D97706',
-  FUNCTION: '#059669',
-  METHOD: '#0891B2',
-  VARIABLE: '#64748B',
+  MODULE:   '#22D3FF', // electric cyan
+  CLASS:    '#F472FF', // hot magenta
+  FUNCTION: '#39FF7A', // neon green
+  METHOD:   '#5AF0E6', // teal
+  VARIABLE: '#FFB648', // amber-orange
 };
 
 function computeScale(node: GraphNode): number {

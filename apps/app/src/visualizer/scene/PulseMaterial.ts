@@ -1,8 +1,10 @@
 import * as pc from 'playcanvas';
 
-// Neon-pulse emissive chunk. Blends smoothly between a resting emissive
-// and an animated pink/cyan cycle via the per-instance uPulseActive uniform
-// (0..1 — supports fractional fades, not just hard on/off).
+// Neon-pulse emissive chunk.
+//
+// At rest (uPulseActive = 0) the node breathes with a subtle sine, emitting
+// the material's base colour. When uPulseActive ramps to 1 during signal
+// playback, it lerps to an animated pink→cyan cycle with boosted intensity.
 const EMISSIVE_PS = /* glsl */ `
   #ifdef MAPCOLOR
   uniform vec3 material_emissive;
@@ -24,10 +26,13 @@ const EMISSIVE_PS = /* glsl */ `
       float rawSine = sin(uTime * pulseFreq);
       float t = rawSine * 0.5 + 0.5;
 
-      vec3 animatedColor = mix(u_pulseColorA, u_pulseColorB, t);
-      vec3 emissionColor = mix(baseEmission, animatedColor, uPulseActive);
+      // Idle breathing — always alive, very subtle
+      float idle = 0.85 + 0.15 * t;
 
-      float intensity = 0.2 + (t * pulseAmp * uPulseActive);
+      vec3 pulseColor    = mix(u_pulseColorA, u_pulseColorB, t);
+      vec3 emissionColor = mix(baseEmission * idle, pulseColor, uPulseActive);
+
+      float intensity = 1.0 + (t * pulseAmp * uPulseActive);
       dEmission = emissionColor * intensity;
   }
 `;
@@ -45,27 +50,30 @@ export function createPulseMaterial(
 ): pc.StandardMaterial {
   const mat = new pc.StandardMaterial();
   mat.diffuse      = baseColor.clone();
-  mat.emissive     = new pc.Color(baseColor.r * 0.1, baseColor.g * 0.1, baseColor.b * 0.1);
-  mat.metalness    = 0.2;
+  // Stronger rest emissive — the glow is doing the heavy lifting since we
+  // dropped ambient light for the neon look.
+  mat.emissive     = new pc.Color(baseColor.r * 0.65, baseColor.g * 0.65, baseColor.b * 0.65);
+  mat.metalness    = 0.15;
   mat.useMetalness = true;
-  mat.gloss        = 0.6;
+  mat.gloss        = 0.75;
 
   (mat.chunks as Record<string, string>).emissivePS = EMISSIVE_PS;
 
-  // Warm-pink → electric-cyan pulse, hue-shifted from the base color
+  // Pulse lerps between a warm pink and the base colour shifted toward cyan.
+  // This keeps the active pulse colour readable across any base palette.
   const colorA = new Float32Array([
-    Math.min(1, baseColor.r * 1.2 + 0.3),
-    baseColor.g * 0.3,
-    Math.min(1, baseColor.b * 0.5 + 0.3),
+    Math.min(1, baseColor.r * 1.2 + 0.35),
+    baseColor.g * 0.35,
+    Math.min(1, baseColor.b * 0.55 + 0.35),
   ]);
   const colorB = new Float32Array([
-    baseColor.r * 0.2,
-    Math.min(1, baseColor.g * 0.8 + 0.2),
+    baseColor.r * 0.25,
+    Math.min(1, baseColor.g * 0.9 + 0.25),
     1.0,
   ]);
 
-  mat.setParameter('pulseFreq',     2.0);
-  mat.setParameter('pulseAmp',      2.0);
+  mat.setParameter('pulseFreq',     2.2);
+  mat.setParameter('pulseAmp',      2.4);
   mat.setParameter('uTime',         0.0);
   mat.setParameter('uPulseActive',  0.0);
   mat.setParameter('u_pulseColorA', colorA);

@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { GraphSnapshot, SignalSimulation } from '@cv/types';
+import type { GraphSnapshot, SignalSimulation, NodeKind } from '@cv/types';
 import type { EdgeKind } from '@cv/types';
 
 import { CameraRig }      from './CameraRig.js';
@@ -9,11 +9,25 @@ import { EdgeFactory }    from './EdgeFactory.js';
 import { PickManager }    from './PickManager.js';
 import { ClusterShell }   from './ClusterShell.js';
 import { LodManager }     from './LodManager.js';
+import { GroundPlane }    from './GroundPlane.js';
 import { loadFont }       from './FontLoader.js';
 import { tickTime as pulseTick } from './PulseMaterial.js';
 import { SignalAnimator }  from '../animation/SignalAnimator.js';
 import { CameraAnimator } from '../animation/CameraAnimator.js';
 import { useGraphStore }  from '../../store/graphStore.js';
+
+// Per-kind elevation above the ground plane. Kept small so nodes still read as
+// "resting on the plane" while giving modules/classes a slight lift over
+// functions and variables for readability.
+const KIND_Y: Record<NodeKind, number> = {
+  MODULE:   3.2,
+  CLASS:    2.6,
+  FUNCTION: 1.6,
+  METHOD:   1.4,
+  VARIABLE: 0.8,
+};
+
+const PLANE_SCALE = 0.9;
 
 export class SceneManager {
   private app: pc.Application;
@@ -37,6 +51,7 @@ export class SceneManager {
   private pickManager: PickManager | null = null;
   private signalAnimator: SignalAnimator;
   private cameraAnimator: CameraAnimator;
+  private groundPlane: GroundPlane;
 
   // Font (lazy-initialized on first setSnapshot)
   private fontAsset: pc.Asset | null = null;
@@ -90,6 +105,7 @@ export class SceneManager {
     this.nodeFactory  = new NodeFactory(this.app);
     this.edgeFactory  = new EdgeFactory(this.app);
     this.clusterShell = new ClusterShell();
+    this.groundPlane  = new GroundPlane(this.app, this.root);
 
     this.cameraAnimator = new CameraAnimator(
       this.cameraRig,
@@ -108,8 +124,9 @@ export class SceneManager {
     this.app.on('update', (dt: number) => {
       if (this.destroyed) return;
       this.cameraRig.update(dt);
+      this.groundPlane.update(dt);                               // 0. grid shimmer
       this.nodeFactory.update(dt);                               // 1. pulse scale tweens
-      this.edgeFactory.update(dt);                               // 2. DATA_FLOW UV scroll
+      this.edgeFactory.update(dt);                               // 2. edge flow UV scroll
       this.clusterShell.syncExpanded(useGraphStore.getState().expandedClusters);
       this.clusterShell.update(dt);                             // 3. spring physics
       this.signalAnimator.update(dt);                           // 4. signal playback
@@ -130,15 +147,22 @@ export class SceneManager {
   setSnapshot(snapshot: GraphSnapshot): void {
     if (this.destroyed) return;
 
+    // Remap the layout so the graph rests on the XZ plane (y = small per-kind
+    // elevation) rather than being stacked by cluster along Z. The backend
+    // still produces a 2D ForceAtlas2 layout in (x, y) with a per-cluster Z —
+    // we ignore that Z here and use it only to add a tiny jitter so stacked
+    // nodes don't Z-fight with each other on the plane.
+    const flat = flattenToPlane(snapshot);
+
     // Lazy-init font then build scene; fire-and-forget is safe here because
     // buildSnapshot is self-contained and the app loop is already running.
     if (!this.fontAsset) {
       loadFont(this.app).then((asset) => {
         this.fontAsset = asset;
-        this.buildSnapshot(snapshot);
+        this.buildSnapshot(flat);
       });
     } else {
-      this.buildSnapshot(snapshot);
+      this.buildSnapshot(flat);
     }
   }
 
@@ -295,6 +319,56 @@ export class SceneManager {
     this.clusterShell.clear();
     this.lodManager?.clear();
 
+    this.groundPlane.destroy();
     this.app.destroy();
   }
+}
+
+// Remap backend layout (2D x,y + clustered z stack) onto the ground plane.
+// - Old: scene.x = n.x,        scene.y = n.y,       scene.z = clusterIdx*30
+// - New: scene.x = n.x*SCALE,  scene.y = kindLift,  scene.z = n.y*SCALE
+// Cluster centroids are recomputed in the new coordinate space so that
+// collapse/expand springs target the correct on-plane positions.
+function flattenToPlane(snapshot: GraphSnapshot): GraphSnapshot {
+  const nodes = snapshot.nodes.map((n) => {
+    const lift = KIND_Y[n.kind];
+    // Small deterministic y-jitter so identical-kind nodes at the same spot
+    // don't Z-fight. Derived from the stale cluster-stack z so two different
+    // clusters still get slightly different lifts.
+    const jitter = ((n.position3d.z % 6) - 3) * 0.05;
+    return {
+      ...n,
+      position3d: {
+        x: n.position3d.x * PLANE_SCALE,
+        y: lift + jitter,
+        z: n.position3d.y * PLANE_SCALE,
+      },
+    };
+  });
+
+  const agg = new Map<string, { x: number; y: number; z: number; count: number }>();
+  for (const n of nodes) {
+    if (!n.clusterId) continue;
+    const entry = agg.get(n.clusterId) ?? { x: 0, y: 0, z: 0, count: 0 };
+    entry.x += n.position3d.x;
+    entry.y += n.position3d.y;
+    entry.z += n.position3d.z;
+    entry.count += 1;
+    agg.set(n.clusterId, entry);
+  }
+
+  const clusters = snapshot.clusters.map((c) => {
+    const entry = agg.get(c.id);
+    if (!entry || entry.count === 0) return c;
+    return {
+      ...c,
+      centroid3d: {
+        x: entry.x / entry.count,
+        y: entry.y / entry.count,
+        z: entry.z / entry.count,
+      },
+    };
+  });
+
+  return { ...snapshot, nodes, clusters };
 }

@@ -15,10 +15,11 @@ export class FlowParticle {
 
     this.entity = new pc.Entity('FlowParticle');
 
-    const mesh = pc.createSphere(app.graphicsDevice, { radius: 0.35, latitudeBands: 6, longitudeBands: 6 });
+    const mesh = pc.createSphere(app.graphicsDevice, { radius: 0.55, latitudeBands: 8, longitudeBands: 8 });
     const mat = new pc.StandardMaterial();
-    mat.emissive = new pc.Color(0.0, 0.9, 1.0);
-    mat.emissiveIntensity = 3.0;
+    mat.emissive = new pc.Color(1.0, 1.0, 1.0);
+    mat.emissiveIntensity = 4.5;
+    mat.diffuse = new pc.Color(0, 0, 0);
     mat.useLighting = false;
     mat.update();
 
