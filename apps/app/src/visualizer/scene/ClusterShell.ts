@@ -1,90 +1,123 @@
 import * as pc from 'playcanvas';
-import type { GraphSnapshot, GraphCluster } from '@cv/types';
+import type { GraphSnapshot } from '@cv/types';
 
-function hexToColor(hex: string): pc.Color {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  return new pc.Color(r, g, b);
+const STIFFNESS = 150.0;
+const DAMPING   = 12.0;
+
+interface ClusterPhysicsEntry {
+  entity: pc.Entity;
+  layoutPos: pc.Vec3;
+  currentTarget: pc.Vec3;
+  velocity: pc.Vec3;
 }
 
-function computeClusterRadius(
-  cluster: GraphCluster,
-  nodeEntities: Map<string, pc.Entity>,
-): number {
-  const centroid = new pc.Vec3(
-    cluster.centroid3d.x,
-    cluster.centroid3d.y,
-    cluster.centroid3d.z,
-  );
-  let maxDist = 0;
-  for (const nodeId of cluster.nodeIds) {
-    const entity = nodeEntities.get(nodeId);
-    if (!entity) continue;
-    const pos  = entity.getPosition();
-    const dist = centroid.distance(pos);
-    if (dist > maxDist) maxDist = dist;
-  }
-  return maxDist + 8;
+interface ClusterData {
+  centroid: pc.Vec3;
+  entries: ClusterPhysicsEntry[];
 }
 
 export class ClusterShell {
-  private shellEntities: pc.Entity[] = [];
-  private visible = false;
+  private clusters = new Map<string, ClusterData>();
 
-  createShells(
-    app: pc.Application,
+  constructor(_app?: pc.Application) {
+    // app reserved for future use
+  }
+
+  register(
     snapshot: GraphSnapshot,
     nodeEntities: Map<string, pc.Entity>,
-    parent: pc.Entity,
   ): void {
-    this.clear();
+    this.clusters.clear();
 
     for (const cluster of snapshot.clusters) {
-      const radius = computeClusterRadius(cluster, nodeEntities);
-      const color  = hexToColor(cluster.color);
+      const entries: ClusterPhysicsEntry[] = [];
 
-      // Wireframe sphere — use a sphere mesh with a wireframe material
-      const mesh = pc.createSphere(app.graphicsDevice, {
-        radius,
-        latitudeBands:  12,
-        longitudeBands: 12,
-      });
+      // Compute centroid from layout positions
+      let cx = 0, cy = 0, cz = 0;
+      let count = 0;
 
-      const mat = new pc.StandardMaterial();
-      mat.diffuse      = color.clone();
-      mat.opacity      = 0.15;
-      mat.blendType    = pc.BLEND_NORMAL;
-      mat.depthWrite   = false;
-      mat.cull         = pc.CULLFACE_NONE;
-      mat.useLighting  = false;
-      mat.update();
+      for (const nodeId of cluster.nodeIds) {
+        const entity = nodeEntities.get(nodeId);
+        if (!entity) continue;
+        const pos = entity.getPosition();
+        cx += pos.x;
+        cy += pos.y;
+        cz += pos.z;
+        count++;
+      }
 
-      const entity = new pc.Entity(`cluster:${cluster.id}`);
-      entity.addComponent('render', {
-        meshInstances: [new pc.MeshInstance(mesh, mat)],
-        castShadows:    false,
-        receiveShadows: false,
-      });
+      const centroid = count > 0
+        ? new pc.Vec3(cx / count, cy / count, cz / count)
+        : new pc.Vec3(cluster.centroid3d.x, cluster.centroid3d.y, cluster.centroid3d.z);
 
-      entity.setPosition(
-        cluster.centroid3d.x,
-        cluster.centroid3d.y,
-        cluster.centroid3d.z,
-      );
-      entity.enabled = this.visible;
-      parent.addChild(entity);
-      this.shellEntities.push(entity);
+      for (const nodeId of cluster.nodeIds) {
+        const entity = nodeEntities.get(nodeId);
+        if (!entity) continue;
+        const layoutPos = entity.getPosition().clone();
+        entries.push({
+          entity,
+          layoutPos,
+          currentTarget: layoutPos.clone(), // default: expanded (at layout pos)
+          velocity: new pc.Vec3(0, 0, 0),
+        });
+      }
+
+      this.clusters.set(cluster.id, { centroid, entries });
     }
   }
 
-  setVisible(on: boolean): void {
-    this.visible = on;
-    for (const e of this.shellEntities) e.enabled = on;
+  /** Expand cluster — move nodes back to their ForceAtlas2 layout positions. */
+  expand(clusterId: string): void {
+    const data = this.clusters.get(clusterId);
+    if (!data) return;
+    for (const entry of data.entries) {
+      entry.currentTarget.copy(entry.layoutPos);
+    }
+  }
+
+  /** Collapse cluster — pull all nodes toward cluster centroid. */
+  collapse(clusterId: string): void {
+    const data = this.clusters.get(clusterId);
+    if (!data) return;
+    for (const entry of data.entries) {
+      entry.currentTarget.copy(data.centroid);
+    }
+  }
+
+  /** Call each frame with dt in seconds. */
+  update(dt: number): void {
+    for (const data of this.clusters.values()) {
+      for (const entry of data.entries) {
+        const pos = entry.entity.getLocalPosition().clone();
+
+        const toTarget = entry.currentTarget.clone().sub(pos);
+        const spring   = toTarget.clone().mulScalar(STIFFNESS);
+        const damp     = entry.velocity.clone().mulScalar(-DAMPING);
+
+        const acc = spring.add(damp);
+        entry.velocity.add(acc.mulScalar(dt));
+
+        const newPos = pos.add(entry.velocity.clone().mulScalar(dt));
+        entry.entity.setLocalPosition(newPos.x, newPos.y, newPos.z);
+      }
+    }
+  }
+
+  // Legacy signature kept so SceneManager.buildSnapshot compiles without changes
+  createShells(
+    _app: pc.Application,
+    _snapshot: GraphSnapshot,
+    _nodeEntities: Map<string, pc.Entity>,
+    _parent: pc.Entity,
+  ): void {
+    // No-op: spring registration is done via register() from SceneManager
+  }
+
+  setVisible(_on: boolean): void {
+    // No-op: spring system has no separate shell entity to show/hide
   }
 
   clear(): void {
-    for (const e of this.shellEntities) e.destroy();
-    this.shellEntities = [];
+    this.clusters.clear();
   }
 }

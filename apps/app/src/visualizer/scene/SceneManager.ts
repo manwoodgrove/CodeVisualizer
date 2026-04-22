@@ -8,9 +8,12 @@ import { NodeFactory }    from './NodeFactory.js';
 import { EdgeFactory }    from './EdgeFactory.js';
 import { PickManager }    from './PickManager.js';
 import { ClusterShell }   from './ClusterShell.js';
+import { LodManager }     from './LodManager.js';
 import { loadFont }       from './FontLoader.js';
+import { tickTime as pulseTick } from './PulseMaterial.js';
 import { SignalAnimator }  from '../animation/SignalAnimator.js';
 import { CameraAnimator } from '../animation/CameraAnimator.js';
+import { useGraphStore }  from '../../store/graphStore.js';
 
 export class SceneManager {
   private app: pc.Application;
@@ -30,12 +33,19 @@ export class SceneManager {
   private nodeFactory: NodeFactory;
   private edgeFactory: EdgeFactory;
   private clusterShell: ClusterShell;
+  private lodManager: LodManager | null = null;
   private pickManager: PickManager | null = null;
   private signalAnimator: SignalAnimator;
   private cameraAnimator: CameraAnimator;
 
   // Font (lazy-initialized on first setSnapshot)
   private fontAsset: pc.Asset | null = null;
+
+  // Shader time accumulator for pulse materials
+  private shaderTime = 0;
+
+  // Zustand unsubscribe handle for cluster state
+  private unsubClusters: (() => void) | null = null;
 
   // State
   private nodeEntities  = new Map<string, pc.Entity>();
@@ -99,10 +109,14 @@ export class SceneManager {
     this.app.on('update', (dt: number) => {
       if (this.destroyed) return;
       this.cameraRig.update(dt);
-      this.nodeFactory.update(dt);
-      this.nodeFactory.updateLabels(this.cameraRig.entity);
-      this.edgeFactory.update(dt);
-      this.signalAnimator.update(dt);
+      this.nodeFactory.update(dt);                               // 1. pulse scale tweens
+      this.edgeFactory.update(dt);                               // 2. DATA_FLOW UV scroll
+      this.clusterShell.update(dt);                             // 3. spring physics
+      this.signalAnimator.update(dt);                           // 4. signal playback
+      this.shaderTime += dt;                                     // 5. pulse shader time
+      pulseTick(this.nodeFactory.getMaterials(), this.shaderTime);
+      this.lodManager?.update();                                 // 6. LOD (after positions settle)
+      this.nodeFactory.updateLabels(this.cameraRig.entity);     // 7. label billboard / cull
     });
 
     // Handle resize
@@ -135,6 +149,9 @@ export class SceneManager {
     this.nodeFactory.clear();
     this.edgeFactory.clear();
     this.clusterShell.clear();
+    this.lodManager?.clear();
+    this.unsubClusters?.();
+    this.unsubClusters = null;
     this.pickManager?.destroy();
     this.pickManager = null;
     this.nodeEntities.clear();
@@ -171,12 +188,48 @@ export class SceneManager {
 
     this.edgeFactory.createEdges(snapshot, this.nodeEntities, this.edgeRoot);
 
-    this.clusterShell.createShells(
-      this.app,
-      snapshot,
-      this.nodeEntities,
-      this.clusterRoot,
-    );
+    // Spring-based cluster animation (replaces wireframe shells)
+    this.clusterShell.register(snapshot, this.nodeEntities);
+
+    // Initialise cluster store: all clusters start expanded
+    const clusterIds = snapshot.clusters.map((c) => c.id);
+    useGraphStore.getState().initClusters(clusterIds);
+
+    // LOD manager
+    this.lodManager = new LodManager(this.cameraRig.entity);
+
+    for (const [id, entity] of this.nodeEntities) {
+      const labelEntity = entity.findByName('label') as pc.Entity | null;
+      this.lodManager.registerNode(id, entity, labelEntity);
+    }
+
+    for (const rec of this.edgeFactory.getLodRecords()) {
+      this.lodManager.registerEdge(
+        rec.edgeId,
+        rec.entity,
+        rec.tubeMesh,
+        rec.lineMesh,
+        rec.meshInstance,
+        rec.midpoint,
+      );
+    }
+
+    // Subscribe to expandedClusters changes
+    let prevExpanded = useGraphStore.getState().expandedClusters;
+    this.unsubClusters = useGraphStore.subscribe((state) => {
+      const expandedClusters = state.expandedClusters;
+      if (expandedClusters === prevExpanded) return;
+      for (const id of clusterIds) {
+        const wasExpanded = prevExpanded.has(id);
+        const isExpanded  = expandedClusters.has(id);
+        if (wasExpanded && !isExpanded) {
+          this.clusterShell.collapse(id);
+        } else if (!wasExpanded && isExpanded) {
+          this.clusterShell.expand(id);
+        }
+      }
+      prevExpanded = expandedClusters;
+    });
 
     // Init picker — re-register any previously registered handlers
     this.pickManager = new PickManager(
@@ -249,6 +302,8 @@ export class SceneManager {
     if (this.destroyed) return;
     this.destroyed = true;
 
+    this.unsubClusters?.();
+    this.unsubClusters = null;
     this.signalAnimator.destroy();
     this.pickManager?.destroy();
     this.cameraRig.destroy();
@@ -256,6 +311,7 @@ export class SceneManager {
     this.nodeFactory.clear();
     this.edgeFactory.clear();
     this.clusterShell.clear();
+    this.lodManager?.clear();
 
     this.app.destroy();
   }
