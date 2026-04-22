@@ -76,13 +76,13 @@ export async function fetchRepoFiles(opts: {
 
   await chunkedAll(treeItems, CONCURRENCY, async (item) => {
     try {
-      const resp = await octokit.repos.getContent({
+      if (!item.sha) return;
+      const resp = await octokit.git.getBlob({
         owner,
         repo,
-        path: item.path!,
-        ref,
+        file_sha: item.sha,
       });
-      const data = resp.data as { content?: string; encoding?: string; size?: number };
+      const data = resp.data;
       if (data.content && data.encoding === 'base64') {
         const content = Buffer.from(data.content, 'base64').toString('utf-8');
         fetchedFiles.push({
@@ -91,6 +91,8 @@ export async function fetchRepoFiles(opts: {
           size: data.size ?? content.length,
         });
       }
+    } catch {
+      // skip unreachable or binary blobs
     } finally {
       done++;
       onProgress?.(Math.round((done / treeItems.length) * 100));
