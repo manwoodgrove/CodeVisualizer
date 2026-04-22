@@ -20,20 +20,25 @@ services:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: file:./data/app.sqlite
       HOST: "0.0.0.0"
+      # In Docker, the browser talks to the backend through the frontend's
+      # nginx proxy, so both OAuth callback and CORS origin reference the
+      # published frontend port.
+      CORS_ORIGIN: http://localhost:38847
+      GITHUB_CALLBACK_URL: http://localhost:38847/auth/github/callback
     depends_on:
       redis:
         condition: service_healthy
     volumes:
       - api-data:/app/data
     ports:
-      - "4000:4000"
+      - "38848:4000"
 
   app:
     build:
       context: .
       dockerfile: apps/app/Dockerfile
     ports:
-      - "8080:80"
+      - "38847:80"
     depends_on:
       - api
 
