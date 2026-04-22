@@ -52,8 +52,8 @@ export async function runImport(ctx: ImportContext): Promise<GraphSnapshot> {
   // Build graph
   const { nodes: rawNodes, edges: rawEdges } = buildGraph(parseResults);
 
-  // Enrich
-  const { nodes: enrichedNodes, edges: enrichedEdges } = enrichGraph(rawNodes, rawEdges);
+  // Enrich (pass fetched files so TypeChecker resolver can perform cross-file resolution)
+  const { nodes: enrichedNodes, edges: enrichedEdges } = enrichGraph(rawNodes, rawEdges, files);
 
   // Cluster
   const { clusters, nodesWithClusters } = clusterGraph(enrichedNodes, enrichedEdges);
