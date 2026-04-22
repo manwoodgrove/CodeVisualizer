@@ -45,7 +45,6 @@ export class SceneManager {
   private shaderTime = 0;
 
   // Zustand unsubscribe handle for cluster state
-  private unsubClusters: (() => void) | null = null;
 
   // State
   private nodeEntities  = new Map<string, pc.Entity>();
@@ -111,6 +110,7 @@ export class SceneManager {
       this.cameraRig.update(dt);
       this.nodeFactory.update(dt);                               // 1. pulse scale tweens
       this.edgeFactory.update(dt);                               // 2. DATA_FLOW UV scroll
+      this.clusterShell.syncExpanded(useGraphStore.getState().expandedClusters);
       this.clusterShell.update(dt);                             // 3. spring physics
       this.signalAnimator.update(dt);                           // 4. signal playback
       this.shaderTime += dt;                                     // 5. pulse shader time
@@ -150,8 +150,6 @@ export class SceneManager {
     this.edgeFactory.clear();
     this.clusterShell.clear();
     this.lodManager?.clear();
-    this.unsubClusters?.();
-    this.unsubClusters = null;
     this.pickManager?.destroy();
     this.pickManager = null;
     this.nodeEntities.clear();
@@ -214,22 +212,8 @@ export class SceneManager {
       );
     }
 
-    // Subscribe to expandedClusters changes
-    let prevExpanded = useGraphStore.getState().expandedClusters;
-    this.unsubClusters = useGraphStore.subscribe((state) => {
-      const expandedClusters = state.expandedClusters;
-      if (expandedClusters === prevExpanded) return;
-      for (const id of clusterIds) {
-        const wasExpanded = prevExpanded.has(id);
-        const isExpanded  = expandedClusters.has(id);
-        if (wasExpanded && !isExpanded) {
-          this.clusterShell.collapse(id);
-        } else if (!wasExpanded && isExpanded) {
-          this.clusterShell.expand(id);
-        }
-      }
-      prevExpanded = expandedClusters;
-    });
+    // Cluster expand/collapse is driven by the per-frame syncExpanded call
+    // in the update tick — no subscribe needed.
 
     // Init picker — re-register any previously registered handlers
     this.pickManager = new PickManager(
@@ -302,8 +286,6 @@ export class SceneManager {
     if (this.destroyed) return;
     this.destroyed = true;
 
-    this.unsubClusters?.();
-    this.unsubClusters = null;
     this.signalAnimator.destroy();
     this.pickManager?.destroy();
     this.cameraRig.destroy();

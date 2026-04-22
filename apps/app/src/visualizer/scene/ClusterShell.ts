@@ -1,123 +1,163 @@
 import * as pc from 'playcanvas';
 import type { GraphSnapshot } from '@cv/types';
 
+// Spring physics constants from the entitytweening- reference implementation.
 const STIFFNESS = 150.0;
 const DAMPING   = 12.0;
+// Staggered starts between cluster members (seconds) for a cascade effect.
+const STAGGER   = 0.015;
+// Clamp per-frame dt to avoid spring explosion on stalls.
+const DT_CLAMP  = 0.05;
 
-interface ClusterPhysicsEntry {
+interface EntityPhysics {
   entity: pc.Entity;
-  layoutPos: pc.Vec3;
-  currentTarget: pc.Vec3;
   velocity: pc.Vec3;
+  layoutPos: pc.Vec3;
+  clusterCenter: pc.Vec3;
+  currentTarget: pc.Vec3;
+  intendedTarget: pc.Vec3;
+  targetDelay: number;
 }
 
 interface ClusterData {
-  centroid: pc.Vec3;
-  entries: ClusterPhysicsEntry[];
+  items: EntityPhysics[];
 }
 
+/**
+ * Spring-driven expand/collapse for graph clusters. Semi-implicit Euler
+ * integration; each node's target toggles between its ForceAtlas2 layout
+ * position (expanded) and the cluster centroid (collapsed).
+ *
+ * API:
+ *   register(snapshot, nodeEntities)  // call once after graph builds
+ *   syncExpanded(ids)                 // every frame: diff vs last call
+ *   update(dt)                        // every frame: spring step
+ */
 export class ClusterShell {
   private clusters = new Map<string, ClusterData>();
+  private expanded = new Set<string>();
+
+  // Scratch vectors — avoid per-frame allocation inside the inner loop.
+  private _cv  = new pc.Vec3();
+  private _tv  = new pc.Vec3();
+  private _dv  = new pc.Vec3();
+  private _sf  = new pc.Vec3();
+  private _df  = new pc.Vec3();
+  private _acc = new pc.Vec3();
 
   constructor(_app?: pc.Application) {
-    // app reserved for future use
+    // app param preserved for backward compat with existing SceneManager wiring
   }
 
-  register(
-    snapshot: GraphSnapshot,
-    nodeEntities: Map<string, pc.Entity>,
-  ): void {
+  register(snapshot: GraphSnapshot, nodeEntities: Map<string, pc.Entity>): void {
     this.clusters.clear();
+    this.expanded = new Set(snapshot.clusters.map((c) => c.id));
+
+    const nodeById = new Map(snapshot.nodes.map((n) => [n.id, n]));
 
     for (const cluster of snapshot.clusters) {
-      const entries: ClusterPhysicsEntry[] = [];
+      const center = new pc.Vec3(
+        cluster.centroid3d.x,
+        cluster.centroid3d.y,
+        cluster.centroid3d.z,
+      );
 
-      // Compute centroid from layout positions
-      let cx = 0, cy = 0, cz = 0;
-      let count = 0;
-
+      const items: EntityPhysics[] = [];
       for (const nodeId of cluster.nodeIds) {
         const entity = nodeEntities.get(nodeId);
-        if (!entity) continue;
-        const pos = entity.getPosition();
-        cx += pos.x;
-        cy += pos.y;
-        cz += pos.z;
-        count++;
-      }
+        const node = nodeById.get(nodeId);
+        if (!entity || !node) continue;
 
-      const centroid = count > 0
-        ? new pc.Vec3(cx / count, cy / count, cz / count)
-        : new pc.Vec3(cluster.centroid3d.x, cluster.centroid3d.y, cluster.centroid3d.z);
+        const layoutPos = new pc.Vec3(
+          node.position3d.x,
+          node.position3d.y,
+          node.position3d.z,
+        );
 
-      for (const nodeId of cluster.nodeIds) {
-        const entity = nodeEntities.get(nodeId);
-        if (!entity) continue;
-        const layoutPos = entity.getPosition().clone();
-        entries.push({
+        items.push({
           entity,
+          velocity: new pc.Vec3(),
           layoutPos,
-          currentTarget: layoutPos.clone(), // default: expanded (at layout pos)
-          velocity: new pc.Vec3(0, 0, 0),
+          clusterCenter: center.clone(),
+          currentTarget: layoutPos.clone(),
+          intendedTarget: layoutPos.clone(),
+          targetDelay: 0,
         });
       }
 
-      this.clusters.set(cluster.id, { centroid, entries });
+      this.clusters.set(cluster.id, { items });
     }
   }
 
-  /** Expand cluster — move nodes back to their ForceAtlas2 layout positions. */
+  /** Target = each node's original layout position (cascade from first → last). */
   expand(clusterId: string): void {
     const data = this.clusters.get(clusterId);
     if (!data) return;
-    for (const entry of data.entries) {
-      entry.currentTarget.copy(entry.layoutPos);
-    }
+    data.items.forEach((item, i) => {
+      item.targetDelay    = i * STAGGER;
+      item.intendedTarget = item.layoutPos;
+      if (item.targetDelay === 0) item.currentTarget.copy(item.layoutPos);
+    });
   }
 
-  /** Collapse cluster — pull all nodes toward cluster centroid. */
+  /** Target = cluster centroid (cascade from last → first for pull-in feel). */
   collapse(clusterId: string): void {
     const data = this.clusters.get(clusterId);
     if (!data) return;
-    for (const entry of data.entries) {
-      entry.currentTarget.copy(data.centroid);
-    }
+    const n = data.items.length;
+    data.items.forEach((item, i) => {
+      const stagger = (n - 1 - i) * STAGGER;
+      item.targetDelay    = stagger;
+      item.intendedTarget = item.clusterCenter;
+      if (stagger === 0) item.currentTarget.copy(item.clusterCenter);
+    });
   }
 
-  /** Call each frame with dt in seconds. */
+  /** Diff the incoming set against the last known state; only animate deltas. */
+  syncExpanded(ids: Set<string>): void {
+    for (const id of ids) {
+      if (!this.expanded.has(id)) this.expand(id);
+    }
+    for (const id of this.expanded) {
+      if (!ids.has(id)) this.collapse(id);
+    }
+    this.expanded = new Set(ids);
+  }
+
   update(dt: number): void {
-    for (const data of this.clusters.values()) {
-      for (const entry of data.entries) {
-        const pos = entry.entity.getLocalPosition().clone();
+    const clampedDt = Math.min(dt, DT_CLAMP);
 
-        const toTarget = entry.currentTarget.clone().sub(pos);
-        const spring   = toTarget.clone().mulScalar(STIFFNESS);
-        const damp     = entry.velocity.clone().mulScalar(-DAMPING);
+    for (const { items } of this.clusters.values()) {
+      for (const item of items) {
+        if (item.targetDelay > 0) {
+          item.targetDelay -= clampedDt;
+          if (item.targetDelay <= 0) item.currentTarget.copy(item.intendedTarget);
+        }
 
-        const acc = spring.add(damp);
-        entry.velocity.add(acc.mulScalar(dt));
+        const current = item.entity.getLocalPosition();
+        this._cv.copy(current);
+        this._tv.copy(item.currentTarget);
 
-        const newPos = pos.add(entry.velocity.clone().mulScalar(dt));
-        entry.entity.setLocalPosition(newPos.x, newPos.y, newPos.z);
+        // F_spring = -k (x - target)
+        this._dv.sub2(this._cv, this._tv);
+        this._sf.copy(this._dv).mulScalar(-STIFFNESS);
+
+        // F_damp = -d v
+        this._df.copy(item.velocity).mulScalar(-DAMPING);
+
+        // a = F / m   (m = 1)
+        this._acc.add2(this._sf, this._df);
+
+        // Semi-implicit Euler: v then x
+        item.velocity.add(this._acc.clone().mulScalar(clampedDt));
+        const nextPos = this._cv.clone().add(item.velocity.clone().mulScalar(clampedDt));
+        item.entity.setLocalPosition(nextPos.x, nextPos.y, nextPos.z);
       }
     }
-  }
-
-  // Legacy signature kept so SceneManager.buildSnapshot compiles without changes
-  createShells(
-    _app: pc.Application,
-    _snapshot: GraphSnapshot,
-    _nodeEntities: Map<string, pc.Entity>,
-    _parent: pc.Entity,
-  ): void {
-    // No-op: spring registration is done via register() from SceneManager
-  }
-
-  setVisible(_on: boolean): void {
-    // No-op: spring system has no separate shell entity to show/hide
   }
 
   clear(): void {
     this.clusters.clear();
+    this.expanded.clear();
   }
 }

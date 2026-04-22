@@ -1,86 +1,81 @@
 import * as pc from 'playcanvas';
 
-function hexToColor(hex: string): pc.Color {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  return new pc.Color(r, g, b);
-}
+// Neon-pulse emissive chunk. Blends smoothly between a resting emissive
+// and an animated pink/cyan cycle via the per-instance uPulseActive uniform
+// (0..1 — supports fractional fades, not just hard on/off).
+const EMISSIVE_PS = /* glsl */ `
+  #ifdef MAPCOLOR
+  uniform vec3 material_emissive;
+  #endif
 
-const PINK_HEX = '#EC4899';
-const CYAN_HEX = '#06B6D4';
+  uniform float uTime;
+  uniform float pulseFreq;
+  uniform float pulseAmp;
+  uniform vec3  u_pulseColorA;
+  uniform vec3  u_pulseColorB;
+  uniform float uPulseActive;
 
-const EMISSIVE_CHUNK = /* glsl */ `
-uniform float uTime;
-uniform float uPulseActive;
-uniform float pulseFreq;
-uniform float pulseAmp;
-uniform vec3 u_pulseColorA;
-uniform vec3 u_pulseColorB;
-uniform vec3 u_baseEmissive;
-void getEmission() {
-    if (uPulseActive > 0.5) {
-        float t = 0.5 + 0.5 * sin(uTime * pulseFreq * 6.2831853);
-        dEmission = mix(u_pulseColorA, u_pulseColorB, t) * pulseAmp;
-    } else {
-        dEmission = u_baseEmissive;
-    }
-}
+  void getEmission() {
+      vec3 baseEmission = vec3(1.0);
+      #ifdef MAPCOLOR
+      baseEmission *= material_emissive;
+      #endif
+
+      float rawSine = sin(uTime * pulseFreq);
+      float t = rawSine * 0.5 + 0.5;
+
+      vec3 animatedColor = mix(u_pulseColorA, u_pulseColorB, t);
+      vec3 emissionColor = mix(baseEmission, animatedColor, uPulseActive);
+
+      float intensity = 0.2 + (t * pulseAmp * uPulseActive);
+      dEmission = emissionColor * intensity;
+  }
 `;
 
 /**
- * Create a neon-pulse StandardMaterial.
- * Shader uniforms updated per frame via setParameter / tickTime.
+ * Creates a StandardMaterial with the neon-pulse emissive chunk overridden.
+ *
+ * Per-instance activation: meshInstance.setParameter('uPulseActive', 1.0 | 0.0)
+ * (or any fractional value for a smooth fade).
+ * Global time: tickTime([...materials], elapsed) once per frame.
  */
 export function createPulseMaterial(
   _app: pc.Application,
   baseColor: pc.Color,
 ): pc.StandardMaterial {
-  const pink = hexToColor(PINK_HEX);
-  const cyan = hexToColor(CYAN_HEX);
-
-  // Tint toward pink (mix 0.4)
-  const colorA = new pc.Color(
-    baseColor.r + (pink.r - baseColor.r) * 0.4,
-    baseColor.g + (pink.g - baseColor.g) * 0.4,
-    baseColor.b + (pink.b - baseColor.b) * 0.4,
-  );
-
-  // Tint toward cyan (mix 0.4)
-  const colorB = new pc.Color(
-    baseColor.r + (cyan.r - baseColor.r) * 0.4,
-    baseColor.g + (cyan.g - baseColor.g) * 0.4,
-    baseColor.b + (cyan.b - baseColor.b) * 0.4,
-  );
-
-  const baseEmissive = new pc.Vec3(baseColor.r * 0.1, baseColor.g * 0.1, baseColor.b * 0.1);
-
   const mat = new pc.StandardMaterial();
   mat.diffuse      = baseColor.clone();
+  mat.emissive     = new pc.Color(baseColor.r * 0.1, baseColor.g * 0.1, baseColor.b * 0.1);
   mat.metalness    = 0.2;
   mat.useMetalness = true;
-  mat.gloss        = 0.5;
+  mat.gloss        = 0.6;
 
-  // Override emissive chunk with pulse GLSL
-  (mat.chunks as Record<string, string>).emissivePS = EMISSIVE_CHUNK;
+  (mat.chunks as Record<string, string>).emissivePS = EMISSIVE_PS;
 
-  // Default uniform values
-  mat.setParameter('pulseFreq',      2.0);
-  mat.setParameter('pulseAmp',       2.0);
-  mat.setParameter('u_pulseColorA',  [colorA.r, colorA.g, colorA.b]);
-  mat.setParameter('u_pulseColorB',  [colorB.r, colorB.g, colorB.b]);
-  mat.setParameter('u_baseEmissive', [baseEmissive.x, baseEmissive.y, baseEmissive.z]);
-  mat.setParameter('uPulseActive',   0.0);
-  mat.setParameter('uTime',          0.0);
+  // Warm-pink → electric-cyan pulse, hue-shifted from the base color
+  const colorA = new Float32Array([
+    Math.min(1, baseColor.r * 1.2 + 0.3),
+    baseColor.g * 0.3,
+    Math.min(1, baseColor.b * 0.5 + 0.3),
+  ]);
+  const colorB = new Float32Array([
+    baseColor.r * 0.2,
+    Math.min(1, baseColor.g * 0.8 + 0.2),
+    1.0,
+  ]);
 
+  mat.setParameter('pulseFreq',     2.0);
+  mat.setParameter('pulseAmp',      2.0);
+  mat.setParameter('uTime',         0.0);
+  mat.setParameter('uPulseActive',  0.0);
+  mat.setParameter('u_pulseColorA', colorA);
+  mat.setParameter('u_pulseColorB', colorB);
   mat.update();
+
   return mat;
 }
 
-/**
- * Tick the shared uTime uniform on all pulse materials.
- * Call once per frame from SceneManager.
- */
+/** Tick the shared uTime uniform. Call once per frame from SceneManager. */
 export function tickTime(materials: pc.StandardMaterial[], t: number): void {
   for (const mat of materials) {
     mat.setParameter('uTime', t);
