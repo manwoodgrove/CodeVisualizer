@@ -22,7 +22,9 @@ export interface JobSocketHandlers {
 export function connectJobSocket(jobId: string, handlers: JobSocketHandlers): () => void {
   const sock = getSocket()
 
-  sock.emit('subscribe', { jobId })
+  const doSubscribe = () => sock.emit('subscribe', jobId)
+  if (sock.connected) doSubscribe()
+  sock.on('connect', doSubscribe)
 
   const onProgress = (event: JobProgressEvent) => {
     if (event.jobId === jobId) handlers.onProgress(event)
@@ -39,7 +41,8 @@ export function connectJobSocket(jobId: string, handlers: JobSocketHandlers): ()
   sock.on('job:error', onError)
 
   return () => {
-    sock.emit('unsubscribe', { jobId })
+    sock.emit('unsubscribe', jobId)
+    sock.off('connect', doSubscribe)
     sock.off('job:progress', onProgress)
     sock.off('job:done', onDone)
     sock.off('job:error', onError)
