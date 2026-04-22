@@ -1,155 +1,293 @@
 import * as pc from 'playcanvas';
-import type { GraphSnapshot } from '@codevisualizer/types';
-import { NodeFactory } from './NodeFactory.js';
-import { EdgeFactory } from './EdgeFactory.js';
-import { useGraphStore } from '../../store/graph-store.js';
-import { useSignalStore } from '../../store/signal-store.js';
-import { SignalAnimator } from '../animation/SignalAnimator.js';
-import { flyToPosition } from '../engine/camera.js';
-import type { OrbitCameraState } from '../engine/camera.js';
+import type { GraphSnapshot, SignalSimulation } from '@cv/types';
+import type { EdgeKind } from '@cv/types';
+
+import { CameraRig }      from './CameraRig.js';
+import { LightingRig }    from './LightingRig.js';
+import { NodeFactory }    from './NodeFactory.js';
+import { EdgeFactory }    from './EdgeFactory.js';
+import { LodManager }     from './LodManager.js';
+import { PickManager }    from './PickManager.js';
+import { ClusterShell }   from './ClusterShell.js';
+import { loadFont }       from './FontLoader.js';
+import { SignalAnimator }  from '../animation/SignalAnimator.js';
+import { CameraAnimator } from '../animation/CameraAnimator.js';
+import { useGraphStore }  from '../../store/graphStore.js';
 
 export class SceneManager {
   private app: pc.Application;
+  private destroyed = false;
+
+  // Scene hierarchy roots
+  private root: pc.Entity;
   private graphRoot: pc.Entity;
+  private edgeRoot: pc.Entity;
+  private clusterRoot: pc.Entity;
   private particleRoot: pc.Entity;
+  private lightingRoot: pc.Entity;
+
+  // Sub-systems
+  private cameraRig: CameraRig;
+  private lightingRig: LightingRig;
   private nodeFactory: NodeFactory;
   private edgeFactory: EdgeFactory;
+  private lodManager: LodManager | null = null;
+  private clusterShell: ClusterShell;
+  private pickManager: PickManager | null = null;
   private signalAnimator: SignalAnimator;
-  private cameraState: OrbitCameraState;
-  private unsubs: Array<() => void> = [];
+  private cameraAnimator: CameraAnimator;
 
-  constructor(app: pc.Application, cameraState: OrbitCameraState) {
-    this.app = app;
-    this.cameraState = cameraState;
+  // Font (lazy-initialized on first setSnapshot)
+  private fontAsset: pc.Asset | null = null;
 
-    this.graphRoot = new pc.Entity('GraphRoot');
+  // State
+  private nodeEntities  = new Map<string, pc.Entity>();
+  private entityToId    = new Map<pc.Entity, string>();
+  private currentHighlight: string | null = null;
+  private pickHandlers: Array<(nodeId: string | null) => void> = [];
+
+  // Subscriptions
+  private unsubCluster: (() => void) | null = null;
+
+  constructor(canvas: HTMLCanvasElement) {
+    this.app = new pc.Application(canvas, {
+      graphicsDeviceOptions: { antialias: true, alpha: false },
+      keyboard: new pc.Keyboard(canvas),
+      mouse:    new pc.Mouse(canvas),
+    });
+
+    this.app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
+    this.app.setCanvasResolution(pc.RESOLUTION_AUTO);
+    this.app.start();
+
+    this.root = new pc.Entity('Root');
+    this.app.root.addChild(this.root);
+
+    this.lightingRoot = new pc.Entity('Lighting');
+    this.root.addChild(this.lightingRoot);
+
+    this.clusterRoot = new pc.Entity('Clusters');
+    this.graphRoot   = new pc.Entity('GraphRoot');
+    this.edgeRoot    = new pc.Entity('Edges');
+    this.root.addChild(this.clusterRoot);
+    this.root.addChild(this.graphRoot);
+    this.root.addChild(this.edgeRoot);
+
     this.particleRoot = new pc.Entity('ParticleRoot');
-    app.root.addChild(this.graphRoot);
-    app.root.addChild(this.particleRoot);
+    this.root.addChild(this.particleRoot);
 
-    this.nodeFactory = new NodeFactory(app, this.graphRoot);
-    this.edgeFactory = new EdgeFactory(app, this.graphRoot);
-    this.signalAnimator = new SignalAnimator(app, this.nodeFactory, this.edgeFactory, this.particleRoot);
+    this.cameraRig    = new CameraRig(this.app, this.root);
+    this.lightingRig  = new LightingRig(this.app, this.lightingRoot);
+    this.nodeFactory  = new NodeFactory(this.app);
+    this.edgeFactory  = new EdgeFactory(this.app);
+    this.clusterShell = new ClusterShell();
 
-    this.subscribeToStores();
-  }
-
-  private subscribeToStores() {
-    // Subscribe to graph snapshot changes
-    this.unsubs.push(
-      useGraphStore.subscribe((state) => {
-        const snapshot = state.snapshot;
-        if (snapshot) this.loadGraph(snapshot);
-      }),
+    this.cameraAnimator = new CameraAnimator(
+      this.cameraRig,
+      (id) => this.nodeFactory.getPosition(id),
     );
 
-    // Subscribe to signal changes
-    this.unsubs.push(
-      useSignalStore.subscribe((state) => {
-        const { simulation, frameIdx, playbackState, speed } = state;
-        if (!simulation) { this.signalAnimator.reset(); return; }
-        this.signalAnimator.applyFrame(simulation.frames[frameIdx] ?? null);
-        if (playbackState === 'playing') {
-          setTimeout(() => {
-            useSignalStore.getState().nextFrame();
-          }, 300 / speed);
-        }
-      }),
+    this.signalAnimator = new SignalAnimator(
+      this.app,
+      this.nodeFactory,
+      this.edgeFactory,
+      this.cameraAnimator,
+      this.particleRoot,
     );
 
-    // Subscribe to selected node for camera fly-to
-    this.unsubs.push(
-      useGraphStore.subscribe((state) => {
-        const { selectedNodeId, snapshot } = state;
-        if (!selectedNodeId || !snapshot) return;
-        const node = snapshot.nodes.find(n => n.id === selectedNodeId);
-        if (!node) return;
-        flyToPosition(
-          this.cameraState,
-          new pc.Vec3(node.position3d.x, node.position3d.y, node.position3d.z),
-          100,
-        );
-      }),
-    );
-  }
+    this.app.on('update', (dt: number) => {
+      if (this.destroyed) return;
+      this.cameraRig.update(dt);
+      this.nodeFactory.update(dt);
+      this.nodeFactory.updateLabels(this.cameraRig.entity);
+      this.edgeFactory.update(dt);
+      this.signalAnimator.update(dt);
+      // ClusterShell spring physics
+      this.clusterShell.update(dt);
+      // LOD: runs after nodeFactory.updateLabels so 80u threshold wins over 800u
+      this.lodManager?.update();
+    });
 
-  private loadGraph(snapshot: GraphSnapshot) {
-    this.clearScene();
-
-    const nodeById = new Map(snapshot.nodes.map(n => [n.id, n]));
-
-    for (const node of snapshot.nodes) {
-      this.nodeFactory.createNode(node);
-    }
-
-    for (const edge of snapshot.edges) {
-      const src = nodeById.get(edge.source);
-      const tgt = nodeById.get(edge.target);
-      if (src && tgt) this.edgeFactory.createEdge(edge, src, tgt);
-    }
-
-    this.setupPicking(snapshot);
-  }
-
-  private setupPicking(snapshot: GraphSnapshot) {
-    const camera = this.cameraState.entity;
-    const cameraComponent = camera.camera;
-    if (!cameraComponent) return;
-
-    this.app.graphicsDevice.canvas.addEventListener('click', (e) => {
-      const canvas = e.target as HTMLCanvasElement;
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      // Simple ray-cast: find closest node by 2D screen proximity
-      // PlayCanvas Picker API changed in v2 — use a simpler approach
-      const bestNode = this.pickNodeByScreenPos(x, y, canvas.width, canvas.height, snapshot);
-      useGraphStore.getState().selectNode(bestNode ?? null);
+    window.addEventListener('resize', () => {
+      if (this.destroyed) return;
+      this.app.resizeCanvas();
+      this.pickManager?.resize();
     });
   }
 
-  private pickNodeByScreenPos(
-    screenX: number, screenY: number,
-    canvasW: number, canvasH: number,
-    snapshot: GraphSnapshot,
-  ): string | null {
-    const camera = this.cameraState.entity;
-    let best: string | null = null;
-    let bestDist = 30; // max screen px radius for a hit
+  setSnapshot(snapshot: GraphSnapshot): void {
+    if (this.destroyed) return;
 
-    for (const node of snapshot.nodes) {
-      const worldPos = new pc.Vec3(node.position3d.x, node.position3d.y, node.position3d.z);
-      const screenPos = new pc.Vec4();
+    if (!this.fontAsset) {
+      loadFont(this.app).then((asset) => {
+        this.fontAsset = asset;
+        this.buildSnapshot(snapshot);
+      });
+    } else {
+      this.buildSnapshot(snapshot);
+    }
+  }
 
-      // Project to clip space
-      const viewProj = new pc.Mat4();
-      viewProj.mul2(camera.camera!.projectionMatrix, camera.camera!.viewMatrix);
-      const clip = viewProj.transformPoint(worldPos, new pc.Vec3());
+  private buildSnapshot(snapshot: GraphSnapshot): void {
+    if (this.destroyed) return;
 
-      // Convert NDC to screen
-      const sx = ((clip.x + 1) * 0.5) * canvasW;
-      const sy = ((1 - clip.y) * 0.5) * canvasH;
+    // Tear down
+    this.nodeFactory.clear();
+    this.edgeFactory.clear();
+    this.clusterShell.clear();
+    this.lodManager?.clear();
+    this.pickManager?.destroy();
+    this.pickManager = null;
+    this.nodeEntities.clear();
+    this.entityToId.clear();
+    this.currentHighlight = null;
 
-      const dist = Math.hypot(sx - screenX, sy - screenY);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = node.id;
+    // Unsubscribe previous cluster subscription
+    this.unsubCluster?.();
+    this.unsubCluster = null;
+
+    this.graphRoot.destroy();
+    this.edgeRoot.destroy();
+    this.clusterRoot.destroy();
+
+    this.clusterRoot = new pc.Entity('Clusters');
+    this.graphRoot   = new pc.Entity('GraphRoot');
+    this.edgeRoot    = new pc.Entity('Edges');
+    this.root.addChild(this.clusterRoot);
+    this.root.addChild(this.graphRoot);
+    this.root.addChild(this.edgeRoot);
+
+    // Populate nodes
+    this.nodeEntities = this.nodeFactory.createNodes(
+      snapshot,
+      this.graphRoot,
+      this.fontAsset ?? undefined,
+    );
+
+    for (const [id, entity] of this.nodeEntities) {
+      this.entityToId.set(entity, id);
+      for (const child of entity.children) {
+        this.entityToId.set(child as pc.Entity, id);
       }
     }
-    return best;
+
+    // Populate edges
+    this.edgeFactory.createEdges(snapshot, this.nodeEntities, this.edgeRoot);
+
+    // Cluster spring shells
+    this.clusterShell.createShells(
+      this.app,
+      snapshot,
+      this.nodeEntities,
+      this.clusterRoot,
+    );
+
+    // LOD manager — register all nodes and edge pairs
+    this.lodManager = new LodManager(this.app, this.cameraRig);
+
+    for (const [id, entity] of this.nodeEntities) {
+      const label = entity.findByName('label') as pc.Entity | null;
+      if (label) this.lodManager.registerNode(id, entity, label);
+    }
+
+    for (const edge of snapshot.edges) {
+      const tubeEntity = this.edgeFactory.getEdgeEntity(edge.id);
+      const lineEntity = this.edgeFactory.getLineEntity(edge.id);
+      const midpoint   = this.edgeFactory.getMidpoint(edge.id);
+      if (tubeEntity && lineEntity && midpoint) {
+        this.lodManager.registerEdge(edge.id, tubeEntity, lineEntity, midpoint);
+      }
+    }
+
+    // Subscribe to cluster expand/collapse store changes
+    this.unsubCluster = useGraphStore.subscribe(
+      (state) => state.expandedClusters,
+      (expandedClusters) => {
+        if (!this.destroyed) this.clusterShell.syncExpanded(expandedClusters);
+      },
+    );
+
+    // Picker
+    this.pickManager = new PickManager(
+      this.app,
+      this.cameraRig.cameraComponent,
+      this.nodeEntities,
+      this.entityToId,
+    );
+    for (const h of this.pickHandlers) {
+      this.pickManager.onPick(h);
+    }
   }
 
-  private clearScene() {
-    this.signalAnimator.reset();
-    this.nodeFactory.destroy();
-    this.edgeFactory.destroy();
+  highlightNode(nodeId: string | null): void {
+    if (this.destroyed) return;
+    if (this.currentHighlight) {
+      this.nodeFactory.setHighlight(this.currentHighlight, false);
+    }
+    this.currentHighlight = nodeId;
+    if (nodeId) {
+      this.nodeFactory.setHighlight(nodeId, true);
+    }
   }
 
-  destroy() {
-    this.clearScene();
-    for (const unsub of this.unsubs) unsub();
-    this.graphRoot.destroy();
-    this.particleRoot.destroy();
+  focusOnNode(nodeId: string): void {
+    if (this.destroyed) return;
+    this.cameraAnimator.focusOnNode(nodeId, 600);
+  }
+
+  playSimulation(
+    sim: SignalSimulation,
+    opts?: { speed?: number; onFrame?: (idx: number) => void },
+  ): void {
+    if (this.destroyed) return;
+    this.signalAnimator.play(sim, opts);
+  }
+
+  pauseSimulation(): void {
+    if (this.destroyed) return;
+    this.signalAnimator.pause();
+  }
+
+  resumeSimulation(): void {
+    if (this.destroyed) return;
+    this.signalAnimator.resume();
+  }
+
+  seekSimulation(frameIdx: number): void {
+    if (this.destroyed) return;
+    this.signalAnimator.seek(frameIdx);
+  }
+
+  setSpeed(speed: number): void {
+    if (this.destroyed) return;
+    this.signalAnimator.setSpeed(speed);
+  }
+
+  setVisibleEdgeKinds(kinds: Set<string>): void {
+    if (this.destroyed) return;
+    this.edgeFactory.setVisibleKinds(kinds as Set<EdgeKind>);
+  }
+
+  onPick(handler: (nodeId: string | null) => void): void {
+    if (this.destroyed) return;
+    this.pickHandlers.push(handler);
+    this.pickManager?.onPick(handler);
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    this.unsubCluster?.();
+    this.signalAnimator.destroy();
+    this.pickManager?.destroy();
+    this.cameraRig.destroy();
+    this.lightingRig.destroy();
+    this.nodeFactory.clear();
+    this.edgeFactory.clear();
+    this.clusterShell.clear();
+    this.lodManager?.clear();
+
+    this.app.destroy();
   }
 }
