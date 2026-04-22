@@ -93,8 +93,44 @@ export class SignalAnimator {
     }
   }
 
+  private activeNodeSet = new Set<string>();
+
   private applyFrame(frame: SignalFrame): void {
-    // Pulse active nodes
+    const incoming = new Set(frame.activeNodeIds);
+
+    // Nodes newly entering the active set → enable pulse shader
+    for (const nodeId of incoming) {
+      if (!this.activeNodeSet.has(nodeId)) {
+        const entity = this.nodeFactory.getEntityMap().get(nodeId);
+        if (entity) {
+          const rc = entity.render;
+          if (rc) {
+            for (const mi of rc.meshInstances) {
+              mi.setParameter('uPulseActive', 1.0);
+            }
+          }
+        }
+      }
+    }
+
+    // Nodes leaving the active set → disable pulse shader
+    for (const nodeId of this.activeNodeSet) {
+      if (!incoming.has(nodeId)) {
+        const entity = this.nodeFactory.getEntityMap().get(nodeId);
+        if (entity) {
+          const rc = entity.render;
+          if (rc) {
+            for (const mi of rc.meshInstances) {
+              mi.setParameter('uPulseActive', 0.0);
+            }
+          }
+        }
+      }
+    }
+
+    this.activeNodeSet = incoming;
+
+    // Pulse active nodes (scale tween — both effects compose)
     for (const nodeId of frame.activeNodeIds) {
       this.nodeFactory.pulse(nodeId, 600);
     }
@@ -117,6 +153,19 @@ export class SignalAnimator {
   private clearParticles(): void {
     for (const p of this.particles) p.destroy();
     this.particles = [];
+    // Clear pulse shader state on all previously active nodes
+    for (const nodeId of this.activeNodeSet) {
+      const entity = this.nodeFactory.getEntityMap().get(nodeId);
+      if (entity) {
+        const rc = entity.render;
+        if (rc) {
+          for (const mi of rc.meshInstances) {
+            mi.setParameter('uPulseActive', 0.0);
+          }
+        }
+      }
+    }
+    this.activeNodeSet.clear();
   }
 
   destroy(): void {
