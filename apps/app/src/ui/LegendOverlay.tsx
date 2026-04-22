@@ -47,7 +47,7 @@ export function LegendOverlay() {
     <div className="legend-overlay">
       <div className="flex-row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
         <span className="panel-title" style={{ margin: 0 }}>Legend</span>
-        <button className="btn--icon" onClick={() => setVisible(false)}>x</button>
+        <button aria-label="Close legend" className="btn--icon" onClick={() => setVisible(false)}>✕</button>
       </div>
 
       <div style={{ marginBottom: 6 }}>
