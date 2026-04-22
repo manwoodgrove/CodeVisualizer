@@ -3,6 +3,7 @@ import { useGraphStore } from '../store/graphStore.js'
 import { useRepoStore } from '../store/repoStore.js'
 import { api } from '../api/client.js'
 import type { EdgeKind } from '@cv/types'
+import { useGraph } from '../store/graphStore.js'
 
 const EDGE_KINDS: EdgeKind[] = ['IMPORT', 'CALL', 'INHERITANCE', 'DATA_FLOW', 'EXPORT']
 
@@ -17,6 +18,8 @@ const EDGE_KIND_LABELS: Record<EdgeKind, string> = {
 export function GraphControls() {
   const activeRepoId = useRepoStore((s) => s.activeRepoId)
   const { visibleEdgeKinds, toggleEdgeKind, setSnapshot, setFilter, snapshot } = useGraphStore()
+  const expandedClusters = useGraph((s) => s.expandedClusters)
+  const toggleCluster = useGraph((s) => s.toggleCluster)
 
   const [moduleFilter, setModuleFilter] = useState('')
   const [depth, setDepth] = useState('')
@@ -105,6 +108,45 @@ export function GraphControls() {
         value={nodeSearch}
         onChange={(e) => handleNodeSearch(e.target.value)}
       />
+
+      {snapshot && snapshot.clusters.length > 0 && (
+        <>
+          <div className="panel-title mt-12">Clusters</div>
+          <div className="flex-col" style={{ gap: 4 }}>
+            {snapshot.clusters.map((cluster) => (
+              <label key={cluster.id} className="flex-row" style={{ gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={expandedClusters.has(cluster.id)}
+                  onChange={() => toggleCluster(cluster.id)}
+                />
+                <span
+                  className="edge-item"
+                  style={{
+                    color: 'var(--text-secondary)',
+                    fontSize: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: cluster.color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  {cluster.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

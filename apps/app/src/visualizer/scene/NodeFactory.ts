@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import type { GraphSnapshot, GraphNode, NodeKind } from '@cv/types';
+import { createPulseMaterial } from './PulseMaterial.js';
 
 // Hex color string → pc.Color
 function hexToColor(hex: string): pc.Color {
@@ -64,15 +65,9 @@ function buildMesh(app: pc.Application, node: GraphNode, baseScale: number): { m
   }
 }
 
-function makeMaterial(colorHex: string): pc.StandardMaterial {
+function makeMaterial(app: pc.Application, colorHex: string): pc.StandardMaterial {
   const color = hexToColor(colorHex);
-  const mat = new pc.StandardMaterial();
-  mat.diffuse = color.clone();
-  mat.emissive = new pc.Color(color.r * 0.1, color.g * 0.1, color.b * 0.1);
-  mat.metalness = 0.2;
-  mat.useMetalness = true;
-  mat.update();
-  return mat;
+  return createPulseMaterial(app, color);
 }
 
 interface NodeData {
@@ -108,7 +103,7 @@ export class NodeFactory {
       const colorHex = NODE_COLORS[node.kind];
       const baseScale = computeScale(node);
       const { mesh, entityScale } = buildMesh(this.app, node, baseScale);
-      const mat = makeMaterial(colorHex);
+      const mat = makeMaterial(this.app, colorHex);
 
       const entity = new pc.Entity(`node:${node.id}`);
       entity.addComponent('render', {
@@ -173,17 +168,16 @@ export class NodeFactory {
     data.highlighted = on;
     const color = hexToColor(data.colorHex);
     if (on) {
-      data.material.emissive = new pc.Color(color.r * 0.6, color.g * 0.6, color.b * 0.6);
+      data.material.setParameter('u_baseEmissive', [color.r * 0.6, color.g * 0.6, color.b * 0.6]);
       data.entity.setLocalScale(
         data.baseScale.x * 1.4,
         data.baseScale.y * 1.4,
         data.baseScale.z * 1.4,
       );
     } else {
-      data.material.emissive = new pc.Color(color.r * 0.1, color.g * 0.1, color.b * 0.1);
+      data.material.setParameter('u_baseEmissive', [color.r * 0.1, color.g * 0.1, color.b * 0.1]);
       data.entity.setLocalScale(data.baseScale.x, data.baseScale.y, data.baseScale.z);
     }
-    data.material.update();
   }
 
   pulse(nodeId: string, durMs: number): void {
@@ -239,6 +233,14 @@ export class NodeFactory {
 
       labelEntity.enabled = visible;
     }
+  }
+
+  getMaterials(): pc.StandardMaterial[] {
+    const mats: pc.StandardMaterial[] = [];
+    for (const data of this.nodeMap.values()) {
+      mats.push(data.material);
+    }
+    return mats;
   }
 
   getEntityId(entity: pc.Entity): string | undefined {

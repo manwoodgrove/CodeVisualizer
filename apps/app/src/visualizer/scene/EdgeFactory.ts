@@ -104,6 +104,17 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
   return mesh;
 }
 
+function buildLineMesh(device: pc.GraphicsDevice, src: pc.Vec3, tgt: pc.Vec3): pc.Mesh {
+  const positions = new Float32Array([
+    src.x, src.y, src.z,
+    tgt.x, tgt.y, tgt.z,
+  ]);
+  const mesh = new pc.Mesh(device);
+  mesh.setPositions(positions);
+  mesh.update(pc.PRIMITIVE_LINES);
+  return mesh;
+}
+
 function makeEdgeMaterial(colorHex: string): pc.StandardMaterial {
   const color = hexToColor(colorHex);
   const mat   = new pc.StandardMaterial();
@@ -113,6 +124,15 @@ function makeEdgeMaterial(colorHex: string): pc.StandardMaterial {
   mat.useMetalness  = true;
   mat.update();
   return mat;
+}
+
+export interface EdgeLodRecord {
+  edgeId: string;
+  entity: pc.Entity;
+  tubeMesh: pc.Mesh;
+  lineMesh: pc.Mesh;
+  meshInstance: pc.MeshInstance;
+  midpoint: pc.Vec3;
 }
 
 export class EdgeFactory {
@@ -125,6 +145,7 @@ export class EdgeFactory {
   ]);
   private dashTexture: pc.Texture | null = null;
   private dataFlowMaterials: pc.StandardMaterial[] = [];
+  private lodRecords: EdgeLodRecord[] = [];
 
   constructor(app: pc.Application) {
     this.app = app;
@@ -209,8 +230,9 @@ export class EdgeFactory {
       }
       this.curvePoints.set(edge.id, pts);
 
-      const cfg  = EDGE_CONFIG[edge.kind];
-      const mesh = buildTubeMesh(this.app.graphicsDevice, pts, cfg.radius);
+      const cfg      = EDGE_CONFIG[edge.kind];
+      const tubeMesh = buildTubeMesh(this.app.graphicsDevice, pts, cfg.radius);
+      const lineMesh = buildLineMesh(this.app.graphicsDevice, src, tgt);
 
       let mat: pc.StandardMaterial;
       if (edge.kind === 'DATA_FLOW') {
@@ -220,15 +242,24 @@ export class EdgeFactory {
         mat = makeEdgeMaterial(cfg.color);
       }
 
+      const mi = new pc.MeshInstance(tubeMesh, mat);
       const entity = new pc.Entity(`edge:${edge.id}`);
       entity.addComponent('render', {
-        meshInstances: [new pc.MeshInstance(mesh, mat)],
+        meshInstances: [mi],
         castShadows:    false,
         receiveShadows: false,
       });
       entity.enabled = this.visibleKinds.has(edge.kind);
       parent.addChild(entity);
       this.edgeEntities.set(edge.id, entity);
+
+      // Midpoint for LOD distance checks
+      const midpoint = new pc.Vec3(
+        (src.x + tgt.x) * 0.5,
+        (src.y + tgt.y) * 0.5,
+        (src.z + tgt.z) * 0.5,
+      );
+      this.lodRecords.push({ edgeId: edge.id, entity, tubeMesh, lineMesh, meshInstance: mi, midpoint });
     }
 
     return this.edgeEntities;
@@ -259,6 +290,10 @@ export class EdgeFactory {
     return this.curvePoints.get(edgeId) ?? null;
   }
 
+  getLodRecords(): EdgeLodRecord[] {
+    return this.lodRecords;
+  }
+
   clear(): void {
     for (const entity of this.edgeEntities.values()) {
       entity.destroy();
@@ -267,5 +302,6 @@ export class EdgeFactory {
     this.curvePoints.clear();
     this.edgeKinds.clear();
     this.dataFlowMaterials = [];
+    this.lodRecords = [];
   }
 }
