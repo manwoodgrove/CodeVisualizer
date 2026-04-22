@@ -66,6 +66,7 @@ export function GraphControls() {
       <form className="flex-col" onSubmit={handleModuleSubmit}>
         <input
           type="text"
+          aria-label="Module path filter"
           placeholder="Module path filter..."
           value={moduleFilter}
           onChange={(e) => setModuleFilter(e.target.value)}
@@ -73,6 +74,7 @@ export function GraphControls() {
         <div className="flex-row">
           <input
             type="number"
+            aria-label="Filter depth"
             placeholder="Depth"
             value={depth}
             onChange={(e) => setDepth(e.target.value)}
@@ -104,6 +106,7 @@ export function GraphControls() {
       <div className="panel-title mt-12">Node Search</div>
       <input
         type="text"
+        aria-label="Search nodes by name"
         placeholder="Search nodes by name..."
         value={nodeSearch}
         onChange={(e) => handleNodeSearch(e.target.value)}

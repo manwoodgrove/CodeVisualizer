@@ -99,6 +99,7 @@ export function ImportPanel() {
 
       <input
         type="search"
+        aria-label="Filter repositories by name or description"
         placeholder="Filter by name or description..."
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
