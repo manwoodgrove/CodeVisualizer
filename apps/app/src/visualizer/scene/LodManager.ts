@@ -1,9 +1,13 @@
 import * as pc from 'playcanvas';
-import type { OrbitCameraState } from '../engine/camera.js';
 
 // Thresholds mirrored from manwoodgrove/lod-system- PlayCanvasLOD.tsx
 export const LABEL_LOD_SQ = 80 * 80;
 export const EDGE_LOD_SQ = 200 * 200;
+
+/** Minimal camera interface satisfied by CameraRig (.entity is the camera pc.Entity). */
+interface CameraRef {
+  entity: pc.Entity;
+}
 
 interface NodeRecord {
   nodeEntity: pc.Entity;
@@ -17,24 +21,23 @@ interface EdgeRecord {
 }
 
 /**
- * Per-frame distance-based LOD for nodes/labels and edges.
+ * Per-frame distance-based LOD for node labels and edges.
  *
- * Usage:
- *   // After scene is populated:
- *   lodManager.registerNode(id, nodeEnt, labelEnt);
- *   lodManager.registerEdge(id, tubeEnt, lineEnt, midpoint);
+ * Label threshold:  hide beyond 80 world units.
+ * Edge threshold:   swap tube → line primitive beyond 200 world units.
  *
- *   // Inside app.on('update'):
- *   lodManager.update();
+ * Pattern extracted from manwoodgrove/lod-system- PlayCanvasLOD.tsx.
+ * Adapted: labels are pc.Entity (not DOM); two entity refs per edge
+ * (tube + line) toggle enabled rather than swapping mesh pointers.
  */
 export class LodManager {
-  private cameraState: OrbitCameraState;
+  private cameraRef: CameraRef;
   private nodes = new Map<string, NodeRecord>();
   private edges = new Map<string, EdgeRecord>();
   private _tmp = new pc.Vec3();
 
-  constructor(_app: pc.Application, cameraState: OrbitCameraState) {
-    this.cameraState = cameraState;
+  constructor(_app: pc.Application, cameraRef: CameraRef) {
+    this.cameraRef = cameraRef;
   }
 
   registerNode(nodeId: string, nodeEntity: pc.Entity, labelEntity: pc.Entity): void {
@@ -56,7 +59,7 @@ export class LodManager {
   }
 
   update(): void {
-    const camPos = this.cameraState.entity.getPosition();
+    const camPos = this.cameraRef.entity.getPosition();
 
     for (const { nodeEntity, labelEntity } of this.nodes.values()) {
       const distSq = this._tmp.sub2(camPos, nodeEntity.getPosition()).lengthSq();
