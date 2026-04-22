@@ -1,114 +1,255 @@
 import * as pc from 'playcanvas';
-import type { GraphNode, NodeKind } from '@codevisualizer/types';
-import { getNodeMaterial, getHoverMaterial } from '../materials/node-material.js';
+import type { GraphSnapshot, GraphNode, NodeKind } from '@cv/types';
+import { createPulseMaterial } from './PulseMaterial.js';
 
-const NODE_SIZES: Record<NodeKind, (node: GraphNode) => number> = {
-  MODULE:   (n) => Math.max(4, Math.min(12, n.metrics.linesOfCode / 100)),
-  CLASS:    (n) => Math.max(3, Math.min(10, n.metrics.linesOfCode / 80)),
-  FUNCTION: (n) => Math.max(2, Math.min(8, n.metrics.cyclomaticComplexity * 0.8)),
-  METHOD:   (n) => Math.max(1.5, Math.min(6, n.metrics.linesOfCode / 40)),
-  VARIABLE: () => 1.5,
+function hexToColor(hex: string): pc.Color {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return new pc.Color(r, g, b);
+}
+
+const NODE_COLORS: Record<NodeKind, string> = {
+  MODULE:   '#1E3A8A',
+  CLASS:    '#D97706',
+  FUNCTION: '#059669',
+  METHOD:   '#0891B2',
+  VARIABLE: '#64748B',
 };
 
+function computeScale(node: GraphNode): number {
+  const m = node.metrics;
+  switch (node.kind) {
+    case 'MODULE':   return 1.0 + m.linesOfCode / 200;
+    case 'CLASS':    return 1.0 + m.linesOfCode / 150;
+    case 'FUNCTION': return Math.max(0.4, Math.min(4, 0.6 + m.cyclomaticComplexity * 0.15));
+    case 'METHOD':   return 0.5 + m.linesOfCode / 80;
+    case 'VARIABLE': return 0.4;
+  }
+}
+
+function buildMesh(
+  app: pc.Application,
+  node: GraphNode,
+  baseScale: number,
+): { mesh: pc.Mesh; entityScale: pc.Vec3 } {
+  const s = baseScale;
+  switch (node.kind) {
+    case 'MODULE':
+      return {
+        mesh: pc.createBox(app.graphicsDevice, { halfExtents: new pc.Vec3(0.5, 0.5, 0.5) }),
+        entityScale: new pc.Vec3(s * 1.2, s * 1.4, s * 1.2),
+      };
+    case 'CLASS':
+      return {
+        mesh: pc.createBox(app.graphicsDevice, { halfExtents: new pc.Vec3(0.5, 0.5, 0.5) }),
+        entityScale: new pc.Vec3(s, s, s),
+      };
+    case 'FUNCTION':
+      return {
+        mesh: pc.createSphere(app.graphicsDevice, { radius: 0.5 }),
+        entityScale: new pc.Vec3(s, s, s),
+      };
+    case 'METHOD':
+      return {
+        mesh: pc.createCapsule(app.graphicsDevice, { radius: 0.3, height: 1.0 }),
+        entityScale: new pc.Vec3(s, s, s),
+      };
+    case 'VARIABLE':
+      return {
+        mesh: pc.createCone(app.graphicsDevice, { baseRadius: 0.4, peakRadius: 0, height: 0.8 }),
+        entityScale: new pc.Vec3(s, s, s),
+      };
+  }
+}
+
+interface NodeData {
+  entity: pc.Entity;
+  baseScale: pc.Vec3;
+  material: pc.StandardMaterial;
+  meshInstance: pc.MeshInstance;
+  colorHex: string;
+  pulseActive: boolean;
+  pulseElapsed: number;
+  pulseDur: number;
+  highlighted: boolean;
+}
+
 export class NodeFactory {
-  private entityMap = new Map<string, pc.Entity>();
   private app: pc.Application;
-  private root: pc.Entity;
+  private nodeMap = new Map<string, NodeData>();
+  private entityToId = new Map<pc.Entity, string>();
+  private shaderTime = 0;
 
-  constructor(app: pc.Application, root: pc.Entity) {
+  constructor(app: pc.Application) {
     this.app = app;
-    this.root = root;
   }
 
-  createNode(node: GraphNode): pc.Entity {
-    const entity = new pc.Entity(node.name);
-    const size = NODE_SIZES[node.kind](node);
+  createNodes(
+    snapshot: GraphSnapshot,
+    parent: pc.Entity,
+    fontAsset?: pc.Asset,
+  ): Map<string, pc.Entity> {
+    const entityMap = new Map<string, pc.Entity>();
 
-    const mesh = this.createMesh(node.kind, size);
-    entity.addComponent('model', { type: 'asset' });
-    const mi = new pc.MeshInstance(mesh, getNodeMaterial(this.app, node.kind));
-    entity.model!.meshInstances = [mi];
+    for (const node of snapshot.nodes) {
+      const colorHex = NODE_COLORS[node.kind];
+      const baseScale = computeScale(node);
+      const { mesh, entityScale } = buildMesh(this.app, node, baseScale);
+      const mat = createPulseMaterial(hexToColor(colorHex));
 
-    // Sphere collision for picking (simpler than mesh collision)
-    entity.addComponent('collision', { type: 'sphere', radius: size * 0.6 });
+      const mi = new pc.MeshInstance(mesh, mat);
+      const entity = new pc.Entity(`node:${node.id}`);
+      entity.addComponent('render', {
+        meshInstances: [mi],
+        castShadows: false,
+        receiveShadows: true,
+      });
 
-    entity.setPosition(node.position3d.x, node.position3d.y, node.position3d.z);
+      entity.setLocalPosition(node.position3d.x, node.position3d.y, node.position3d.z);
+      entity.setLocalScale(entityScale.x, entityScale.y, entityScale.z);
 
-    // Label
-    const label = this.createLabel(node.name, node.kind, size);
-    entity.addChild(label);
+      parent.addChild(entity);
 
-    this.root.addChild(entity);
-    this.entityMap.set(node.id, entity);
-    return entity;
+      this.addLabel(entity, node.name, baseScale, fontAsset);
+
+      const data: NodeData = {
+        entity,
+        baseScale: entityScale.clone(),
+        material: mat,
+        meshInstance: mi,
+        colorHex,
+        pulseActive: false,
+        pulseElapsed: 0,
+        pulseDur: 600,
+        highlighted: false,
+      };
+      this.nodeMap.set(node.id, data);
+      this.entityToId.set(entity, node.id);
+      entityMap.set(node.id, entity);
+    }
+
+    return entityMap;
   }
 
-  private createMesh(kind: NodeKind, size: number): pc.Mesh {
-    const device = this.app.graphicsDevice;
-    switch (kind) {
-      case 'MODULE':   return pc.createBox(device, { halfExtents: new pc.Vec3(size, size * 0.3, size) });
-      case 'CLASS':    return pc.createBox(device, { halfExtents: new pc.Vec3(size * 0.8, size * 0.8, size * 0.8) });
-      case 'FUNCTION': return pc.createSphere(device, { radius: size });
-      case 'METHOD':   return pc.createCapsule(device, { radius: size * 0.4, height: size });
-      case 'VARIABLE': return pc.createSphere(device, { radius: size });
+  private addLabel(
+    parent: pc.Entity,
+    name: string,
+    baseScale: number,
+    fontAsset?: pc.Asset,
+  ): void {
+    if (!fontAsset) return;
+
+    const label = new pc.Entity('label');
+    label.addComponent('element', {
+      type: pc.ELEMENTTYPE_TEXT,
+      text: name,
+      fontAsset: fontAsset.id,
+      fontSize: 12,
+      color: new pc.Color(1, 1, 1),
+      anchor: new pc.Vec4(0.5, 0.5, 0.5, 0.5),
+      pivot: new pc.Vec2(0.5, 0.5),
+      autoWidth: true,
+      autoHeight: true,
+    });
+    label.setLocalPosition(0, baseScale + 0.5, 0);
+    parent.addChild(label);
+  }
+
+  setHighlight(nodeId: string, on: boolean): void {
+    const data = this.nodeMap.get(nodeId);
+    if (!data) return;
+    data.highlighted = on;
+    // Pulse shader owns emissive; highlight is communicated via scale only
+    if (on) {
+      data.entity.setLocalScale(
+        data.baseScale.x * 1.4,
+        data.baseScale.y * 1.4,
+        data.baseScale.z * 1.4,
+      );
+    } else {
+      data.entity.setLocalScale(data.baseScale.x, data.baseScale.y, data.baseScale.z);
     }
   }
 
-  private createLabel(name: string, kind: NodeKind, nodeSize: number): pc.Entity {
-    const label = new pc.Entity('Label');
-    label.addComponent('element', {
-      type: pc.ELEMENTTYPE_TEXT,
-      text: name.length > 20 ? name.slice(0, 18) + '…' : name,
-      fontSize: 10,
-      color: new pc.Color(0.9, 0.9, 1),
-      anchor: new pc.Vec4(0.5, 0.5, 0.5, 0.5),
-      pivot: new pc.Vec2(0.5, 0),
-      width: 120,
-      height: 20,
-    });
-    label.setLocalPosition(0, nodeSize + 1.5, 0);
-    return label;
+  pulse(nodeId: string, durMs: number): void {
+    const data = this.nodeMap.get(nodeId);
+    if (!data) return;
+    data.pulseActive = true;
+    data.pulseElapsed = 0;
+    data.pulseDur = durMs;
+    // Activate shader-driven pulse on this node's mesh instance
+    data.meshInstance.setParameter('uPulseActive', 1.0);
   }
 
-  getEntity(nodeId: string): pc.Entity | undefined {
-    return this.entityMap.get(nodeId);
+  update(dt: number): void {
+    this.shaderTime += dt;
+
+    for (const data of this.nodeMap.values()) {
+      // Advance global time uniform on every material each frame
+      data.material.setParameter('uTime', this.shaderTime);
+
+      if (!data.pulseActive) continue;
+
+      data.pulseElapsed += dt * 1000;
+      const t = Math.min(data.pulseElapsed / data.pulseDur, 1);
+
+      if (t >= 1) {
+        data.pulseActive = false;
+        // Deactivate shader pulse and restore base scale
+        data.meshInstance.setParameter('uPulseActive', 0.0);
+        if (!data.highlighted) {
+          data.entity.setLocalScale(data.baseScale.x, data.baseScale.y, data.baseScale.z);
+        }
+      }
+    }
   }
 
-  setHover(nodeId: string, hover: boolean) {
-    const entity = this.entityMap.get(nodeId);
-    if (!entity || !entity.model) return;
-    // Find the graph node kind from entity name - stored in user data
-    const kind = (entity as unknown as { _nodeKind?: NodeKind })._nodeKind ?? 'FUNCTION';
-    const mis = entity.model.meshInstances;
-    if (!mis || mis.length === 0) return;
-    mis[0].material = hover
-      ? getHoverMaterial(this.app, kind)
-      : getNodeMaterial(this.app, kind);
+  updateLabels(camera: pc.Entity): void {
+    const camPos = camera.getPosition();
+
+    for (const data of this.nodeMap.values()) {
+      const labelEntity = data.entity.findByName('label');
+      if (!labelEntity) continue;
+
+      const nodePos = data.entity.getPosition();
+      const dist = camPos.distance(nodePos);
+      const visible = dist < 800;
+
+      labelEntity.lookAt(camPos.x, camPos.y, camPos.z);
+      const euler = labelEntity.getLocalEulerAngles();
+      labelEntity.setLocalEulerAngles(euler.x, euler.y + 180, euler.z);
+
+      // LodManager overrides this with a tighter 80u threshold when wired in.
+      // NodeFactory keeps 800u as the outer fallback.
+      labelEntity.enabled = visible;
+    }
   }
 
-  pulse(nodeId: string) {
-    const entity = this.entityMap.get(nodeId);
-    if (!entity) return;
-    const orig = entity.getLocalScale().clone();
-    const peak = orig.clone().mulScalar(1.4);
-    const start = performance.now();
-    const duration = 600;
-
-    const animate = () => {
-      const t = Math.min((performance.now() - start) / duration, 1);
-      // ease out back
-      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-      const scale = t < 0.5
-        ? pc.math.lerp(orig.x, peak.x, ease)
-        : pc.math.lerp(peak.x, orig.x, (t - 0.5) * 2);
-      entity.setLocalScale(scale, scale, scale);
-      if (t < 1) requestAnimationFrame(animate);
-    };
-    requestAnimationFrame(animate);
+  getEntityId(entity: pc.Entity): string | undefined {
+    return this.entityToId.get(entity);
   }
 
-  destroy() {
-    for (const entity of this.entityMap.values()) entity.destroy();
-    this.entityMap.clear();
+  getEntityMap(): Map<string, pc.Entity> {
+    const map = new Map<string, pc.Entity>();
+    for (const [id, data] of this.nodeMap) {
+      map.set(id, data.entity);
+    }
+    return map;
+  }
+
+  getPosition(nodeId: string): pc.Vec3 | null {
+    const data = this.nodeMap.get(nodeId);
+    if (!data) return null;
+    return data.entity.getPosition().clone();
+  }
+
+  clear(): void {
+    for (const data of this.nodeMap.values()) {
+      data.entity.destroy();
+    }
+    this.nodeMap.clear();
+    this.entityToId.clear();
+    this.shaderTime = 0;
   }
 }
