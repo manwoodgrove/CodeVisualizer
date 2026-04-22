@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - path: apps/api/.env
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: file:./data/app.sqlite
+      HOST: "0.0.0.0"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - api-data:/app/data
+    ports:
+      - "4000:4000"
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/app/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  redis-data:
+  api-data:

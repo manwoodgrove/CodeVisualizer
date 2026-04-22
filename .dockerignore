@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+**/dist
+**/.vite
+**/.turbo
+**/data
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
+.git
+.env
+**/.env
+.claude
+.omc
+plan.md
+*.md
