@@ -22,18 +22,19 @@ const NODE_COLORS: Record<NodeKind, string> = {
 };
 
 function computeScale(node: GraphNode): number {
+  const scaleFactor = 4.0;
   const m = node.metrics;
   switch (node.kind) {
     case 'MODULE':
-      return 1.0 + m.linesOfCode / 200;
+      return (1.0 + m.linesOfCode / 200) * scaleFactor;
     case 'CLASS':
-      return 1.0 + m.linesOfCode / 150;
+      return (1.0 + m.linesOfCode / 150) * scaleFactor;
     case 'FUNCTION':
-      return Math.max(0.4, Math.min(4, 0.6 + m.cyclomaticComplexity * 0.15));
+      return Math.max(0.4, Math.min(4, 0.6 + m.cyclomaticComplexity * 0.15)) * scaleFactor;
     case 'METHOD':
-      return 0.5 + m.linesOfCode / 80;
+      return (0.5 + m.linesOfCode / 80) * scaleFactor;
     case 'VARIABLE':
-      return 0.4;
+      return 0.4 * scaleFactor;
   }
 }
 
