@@ -42,18 +42,24 @@ export function layoutGraph(
   forceAtlas2.assign(graph, {
     iterations: 300,
     settings: {
-      gravity: 1,
-      scalingRatio: 10,
+      gravity: 5,
+      scalingRatio: 2,
       strongGravityMode: false,
       slowDown: 2,
     },
   });
 
-  // Extract positions and assign z from cluster index
+  // Extract positions and assign z from node kind
   const layoutNodes = nodes.map((n) => {
     const attrs = graph.getNodeAttributes(n.id) as { x: number; y: number };
-    const clusterIndex = n.clusterId !== null ? (clusterIndexMap.get(n.clusterId) ?? 0) : 0;
-    const z = clusterIndex * 30 + (Math.random() - 0.5) * 4;
+
+    let z = 0;
+    if (n.kind === 'FUNCTION' || n.kind === 'METHOD') {
+      z = 20;
+    } else if (n.kind === 'VARIABLE') {
+      z = 10;
+    }
+
     return {
       ...n,
       position3d: { x: attrs.x, y: attrs.y, z },

@@ -26,14 +26,14 @@ const EMISSIVE_PS = /* glsl */ `
       float rawSine = sin(uTime * pulseFreq);
       float t = rawSine * 0.5 + 0.5;
 
-      // Idle breathing — always alive, very subtle
-      float idle = 0.85 + 0.15 * t;
+      // Idle breathing — more pronounced animation
+      float idle = 0.5 + 0.8 * t;
 
       vec3 pulseColor    = mix(u_pulseColorA, u_pulseColorB, t);
       vec3 emissionColor = mix(baseEmission * idle, pulseColor, uPulseActive);
 
       float intensity = 1.0 + (t * pulseAmp * uPulseActive);
-      dEmission = emissionColor * intensity;
+      dEmission = emissionColor * intensity * idle;
   }
 `;
 

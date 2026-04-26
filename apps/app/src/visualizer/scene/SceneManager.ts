@@ -20,11 +20,11 @@ import { useGraphStore }  from '../../store/graphStore.js';
 // "resting on the plane" while giving modules/classes a slight lift over
 // functions and variables for readability.
 const KIND_Y: Record<NodeKind, number> = {
-  MODULE:   3.2,
-  CLASS:    2.6,
-  FUNCTION: 1.6,
-  METHOD:   1.4,
-  VARIABLE: 0.8,
+  MODULE:   0.0,
+  CLASS:    0.0,
+  FUNCTION: 30.0,
+  METHOD:   30.0,
+  VARIABLE: 15.0,
 };
 
 const PLANE_SCALE = 0.9;
@@ -339,9 +339,9 @@ function flattenToPlane(snapshot: GraphSnapshot): GraphSnapshot {
     return {
       ...n,
       position3d: {
-        x: n.position3d.x * PLANE_SCALE,
+        x: n.position3d.x,
         y: lift + jitter,
-        z: n.position3d.y * PLANE_SCALE,
+        z: n.position3d.y,
       },
     };
   });

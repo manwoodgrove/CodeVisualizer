@@ -11,11 +11,11 @@ function hexToColor(hex: string): pc.Color {
 // Neon edge palette. Colors picked to contrast with node kinds so that the
 // "communication beams" read clearly against a colourful graph.
 const EDGE_CONFIG: Record<EdgeKind, { radius: number; color: string; flowSpeed: number }> = {
-  IMPORT:      { radius: 0.11, color: '#22D3FF', flowSpeed: 0.45 }, // cyan
-  CALL:        { radius: 0.13, color: '#39FF7A', flowSpeed: 1.10 }, // green — fast
-  INHERITANCE: { radius: 0.20, color: '#FFB648', flowSpeed: 0.25 }, // amber
-  DATA_FLOW:   { radius: 0.12, color: '#F472FF', flowSpeed: 0.95 }, // magenta
-  EXPORT:      { radius: 0.09, color: '#C4B5FD', flowSpeed: 0.20 }, // lilac
+  IMPORT:      { radius: 0.55, color: '#22D3FF', flowSpeed: 1.50 }, // cyan
+  CALL:        { radius: 0.65, color: '#39FF7A', flowSpeed: 3.50 }, // green — fast
+  INHERITANCE: { radius: 1.00, color: '#FFB648', flowSpeed: 0.80 }, // amber
+  DATA_FLOW:   { radius: 0.60, color: '#F472FF', flowSpeed: 3.00 }, // magenta
+  EXPORT:      { radius: 0.45, color: '#C4B5FD', flowSpeed: 0.70 }, // lilac
 };
 
 const TUBE_SEGMENTS = 20;
@@ -139,7 +139,7 @@ function createFlowTexture(device: pc.GraphicsDevice): pc.Texture {
 
   for (let y = 0; y < height; y++) {
     const v = y / height;
-    let intensity = 0.10; // base rail glow
+    let intensity = 0.40; // base rail glow
     for (const c of pulses) {
       const d = v - c;
       intensity += Math.exp(-(d * d) / (2 * sigma * sigma));
