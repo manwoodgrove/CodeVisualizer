@@ -154,6 +154,7 @@ export class NodeFactory {
     label.addComponent('element', {
       type: pc.ELEMENTTYPE_TEXT,
       text: name,
+      enabled: false,
       fontAsset: fontAsset.id,
       fontSize: 3,
       color: new pc.Color(1, 1, 1),
@@ -229,7 +230,7 @@ export class NodeFactory {
 
       const nodePos = data.entity.getPosition();
       const dist = camPos.distance(nodePos);
-      const visible = dist < 100;
+      const visible = false;
 
       labelEntity.lookAt(camPos.x, camPos.y, camPos.z);
       const euler = labelEntity.getLocalEulerAngles();
