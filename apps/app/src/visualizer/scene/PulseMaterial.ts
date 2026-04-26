@@ -2,9 +2,14 @@ import * as pc from 'playcanvas';
 
 // Neon-pulse emissive chunk.
 //
-// At rest (uPulseActive = 0) the node breathes with a subtle sine, emitting
-// the material's base colour. When uPulseActive ramps to 1 during signal
-// playback, it lerps to an animated pink→cyan cycle with boosted intensity.
+// At rest (uPulseActive = 0) the node breathes with a sine wave AND a
+// fresnel rim glow, so even static nodes feel alive — the silhouette
+// brightens as the camera orbits around them. When uPulseActive ramps
+// to 1 during signal playback, the node lerps into an animated
+// pink→cyan cycle with boosted intensity.
+//
+// uPulsePhase is set per-instance/material so a graph of N nodes
+// breathes out-of-phase rather than strobing in unison.
 const EMISSIVE_PS = /* glsl */ `
   #ifdef MAPCOLOR
   uniform vec3 material_emissive;
@@ -13,29 +18,38 @@ const EMISSIVE_PS = /* glsl */ `
   uniform float uTime;
   uniform float pulseFreq;
   uniform float pulseAmp;
+  uniform float uPulsePhase;
   uniform vec3  u_pulseColorA;
   uniform vec3  u_pulseColorB;
   uniform float uPulseActive;
+  uniform vec3  u_baseEmissive;
 
   void getEmission() {
-      vec3 baseEmission = vec3(1.0);
-      #ifdef MAPCOLOR
-      baseEmission *= material_emissive;
-      #endif
+      vec3 baseEmission = u_baseEmissive;
 
-      float rawSine = sin(uTime * pulseFreq);
+      float rawSine = sin(uTime * pulseFreq + uPulsePhase);
       float t = rawSine * 0.5 + 0.5;
 
-      // Idle breathing — more pronounced animation
-      float idle = 0.5 + 0.8 * t;
+      // Idle breathing — visible animation even on static graphs
+      float idle = 0.65 + 0.55 * t;
+
+      // Fresnel rim — silhouette brightens against the dark background.
+      vec3 N = normalize(vNormalW);
+      vec3 V = normalize(view_position - vPositionW);
+      float ndotv = clamp(dot(N, V), 0.0, 1.0);
+      float fresnel = pow(1.0 - ndotv, 1.8);
+      float rim = 0.45 + 1.40 * fresnel;
 
       vec3 pulseColor    = mix(u_pulseColorA, u_pulseColorB, t);
-      vec3 emissionColor = mix(baseEmission * idle, pulseColor, uPulseActive);
+      vec3 emissionColor = mix(baseEmission * idle * rim, pulseColor * rim, uPulseActive);
 
       float intensity = 1.0 + (t * pulseAmp * uPulseActive);
-      dEmission = emissionColor * intensity * idle;
+      dEmission = emissionColor * intensity;
   }
 `;
+
+// Counter so each created material gets a different breathing phase.
+let phaseSeed = 0;
 
 /**
  * Creates a StandardMaterial with the neon-pulse emissive chunk overridden.
@@ -50,12 +64,11 @@ export function createPulseMaterial(
 ): pc.StandardMaterial {
   const mat = new pc.StandardMaterial();
   mat.diffuse      = baseColor.clone();
-  // Stronger rest emissive — the glow is doing the heavy lifting since we
-  // dropped ambient light for the neon look.
-  mat.emissive     = new pc.Color(baseColor.r * 0.65, baseColor.g * 0.65, baseColor.b * 0.65);
-  mat.metalness    = 0.15;
+  // Stronger rest emissive so even shadowed sides glow.
+  mat.emissive     = new pc.Color(baseColor.r * 0.85, baseColor.g * 0.85, baseColor.b * 0.85);
+  mat.metalness    = 0.20;
   mat.useMetalness = true;
-  mat.gloss        = 0.75;
+  mat.gloss        = 0.85;
 
   (mat.chunks as Record<string, string>).emissivePS = EMISSIVE_PS;
 
@@ -72,12 +85,27 @@ export function createPulseMaterial(
     1.0,
   ]);
 
-  mat.setParameter('pulseFreq',     2.2);
-  mat.setParameter('pulseAmp',      2.4);
+  // Initial base emissive triplet — kept as a uniform so highlight() can
+  // boost it without recompiling shaders.
+  const baseEmissive = new Float32Array([
+    baseColor.r * 0.85,
+    baseColor.g * 0.85,
+    baseColor.b * 0.85,
+  ]);
+
+  // Slightly randomised breathing freq per-material for a more organic
+  // "swarm" feel — same family of frequencies, different phases.
+  const freqJitter = 1.85 + ((phaseSeed * 0.137) % 1) * 0.7;
+  const phase      = (phaseSeed++ * 0.71) % (Math.PI * 2);
+
+  mat.setParameter('pulseFreq',     freqJitter);
+  mat.setParameter('pulseAmp',      2.6);
   mat.setParameter('uTime',         0.0);
   mat.setParameter('uPulseActive',  0.0);
+  mat.setParameter('uPulsePhase',   phase);
   mat.setParameter('u_pulseColorA', colorA);
   mat.setParameter('u_pulseColorB', colorB);
+  mat.setParameter('u_baseEmissive', baseEmissive);
   mat.update();
 
   return mat;

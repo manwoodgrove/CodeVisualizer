@@ -8,18 +8,28 @@ function hexToColor(hex: string): pc.Color {
   return new pc.Color(r, g, b);
 }
 
-// Neon edge palette. Colors picked to contrast with node kinds so that the
-// "communication beams" read clearly against a colourful graph.
-const EDGE_CONFIG: Record<EdgeKind, { radius: number; color: string; flowSpeed: number }> = {
-  IMPORT:      { radius: 0.55, color: '#22D3FF', flowSpeed: 1.50 }, // cyan
-  CALL:        { radius: 0.65, color: '#39FF7A', flowSpeed: 3.50 }, // green — fast
-  INHERITANCE: { radius: 1.00, color: '#FFB648', flowSpeed: 0.80 }, // amber
-  DATA_FLOW:   { radius: 0.60, color: '#F472FF', flowSpeed: 3.00 }, // magenta
-  EXPORT:      { radius: 0.45, color: '#C4B5FD', flowSpeed: 0.70 }, // lilac
+// Saturated neon edge palette. Each kind reads as a distinct "wire" running
+// between nodes. Colors are pushed slightly toward 1.0 so additive blending
+// keeps them readable against the dark background.
+const EDGE_CONFIG: Record<
+  EdgeKind,
+  { radius: number; color: string; flowSpeed: number; intensity: number }
+> = {
+  IMPORT:      { radius: 0.85, color: '#22D3FF', flowSpeed: 1.40, intensity: 1.6 }, // cyan
+  CALL:        { radius: 0.95, color: '#39FF7A', flowSpeed: 3.20, intensity: 1.7 }, // green — fast
+  INHERITANCE: { radius: 1.30, color: '#FFB648', flowSpeed: 0.70, intensity: 1.4 }, // amber
+  DATA_FLOW:   { radius: 0.90, color: '#F472FF', flowSpeed: 2.80, intensity: 1.7 }, // magenta
+  EXPORT:      { radius: 0.75, color: '#C4B5FD', flowSpeed: 0.65, intensity: 1.3 }, // lilac
 };
 
-const TUBE_SEGMENTS = 20;
+const TUBE_SEGMENTS = 36;
 const TUBE_SIDES = 8;
+
+// Visual lift for the bezier control point — a touch higher than before so
+// the arcs read clearly as "wires hanging between buildings" against the
+// dark plane.
+const ARC_FACTOR = 0.45;
+const ARC_MAX = 90;
 
 /** Sample a quadratic Bézier at t ∈ [0,1] */
 function sampleBezier(p0: pc.Vec3, p1: pc.Vec3, p2: pc.Vec3, t: number): pc.Vec3 {
@@ -31,6 +41,12 @@ function sampleBezier(p0: pc.Vec3, p1: pc.Vec3, p2: pc.Vec3, t: number): pc.Vec3
   );
 }
 
+/**
+ * Build a tube mesh with per-vertex V coordinate matching arc-length along
+ * the curve. We also pack a per-vertex alpha-fade into UV0.x so the shader
+ * can soften the endpoints (so edges visually merge into the nodes rather
+ * than abruptly clipping into them).
+ */
 function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: number): pc.Mesh {
   const sides = TUBE_SIDES;
   const segments = points.length;
@@ -43,8 +59,14 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
   const uvs       = new Float32Array(totalVerts * 2);
   const indices   = new Uint16Array(totalTris * 3);
 
+  // Stable up vector — using a simple non-axis-aligned reference avoids the
+  // tube "flipping" at vertical sections.
+  const reference = new pc.Vec3(0.001, 1.0, 0.0).normalize();
+
+  // Track binormal across rings to prevent twist (parallel transport frame).
+  let lastBinormal: pc.Vec3 | null = null;
+
   for (let si = 0; si < segments; si++) {
-    // Tangent
     let tangent: pc.Vec3;
     if (si === 0) {
       tangent = new pc.Vec3().sub2(points[1], points[0]).normalize();
@@ -54,12 +76,30 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
       tangent = new pc.Vec3().sub2(points[si + 1], points[si - 1]).normalize();
     }
 
-    // Build orthonormal frame
-    const arbitrary = Math.abs(tangent.y) < 0.9
-      ? new pc.Vec3(0, 1, 0)
-      : new pc.Vec3(1, 0, 0);
-    const binormal = new pc.Vec3().cross(tangent, arbitrary).normalize();
-    const normal   = new pc.Vec3().cross(binormal, tangent).normalize();
+    let binormal: pc.Vec3;
+    if (!lastBinormal) {
+      binormal = new pc.Vec3().cross(tangent, reference).normalize();
+      if (binormal.length() < 0.01) {
+        binormal = new pc.Vec3().cross(tangent, new pc.Vec3(1, 0, 0)).normalize();
+      }
+    } else {
+      // Project last binormal onto plane perpendicular to current tangent.
+      const dotTB = lastBinormal.dot(tangent);
+      binormal = new pc.Vec3(
+        lastBinormal.x - tangent.x * dotTB,
+        lastBinormal.y - tangent.y * dotTB,
+        lastBinormal.z - tangent.z * dotTB,
+      ).normalize();
+    }
+    lastBinormal = binormal.clone();
+
+    const normal = new pc.Vec3().cross(binormal, tangent).normalize();
+
+    // Smooth taper at each end — so the tube emerges from / merges into the
+    // node rather than terminating abruptly.
+    const tNorm = si / (segments - 1);
+    const taper = Math.min(1, Math.min(tNorm, 1 - tNorm) * 6.0);
+    const r = radius * (0.35 + 0.65 * taper);
 
     for (let vi = 0; vi < sides; vi++) {
       const angle = (vi / sides) * Math.PI * 2;
@@ -71,21 +111,21 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
       const nz = normal.z * cos + binormal.z * sin;
 
       const vIdx = (si * vertsPerRing + vi) * 3;
-      positions[vIdx + 0] = points[si].x + nx * radius;
-      positions[vIdx + 1] = points[si].y + ny * radius;
-      positions[vIdx + 2] = points[si].z + nz * radius;
+      positions[vIdx + 0] = points[si].x + nx * r;
+      positions[vIdx + 1] = points[si].y + ny * r;
+      positions[vIdx + 2] = points[si].z + nz * r;
       normals[vIdx + 0]   = nx;
       normals[vIdx + 1]   = ny;
       normals[vIdx + 2]   = nz;
 
-      // UVs: U around circumference, V along length 0→1 (source→target)
+      // U: alpha-fade weight (0 at endpoints, 1 in middle).
+      // V: arc-length parameter (0→1, source→target).
       const uvIdx = (si * vertsPerRing + vi) * 2;
-      uvs[uvIdx + 0] = vi / sides;
-      uvs[uvIdx + 1] = si / (segments - 1);
+      uvs[uvIdx + 0] = taper;
+      uvs[uvIdx + 1] = tNorm;
     }
   }
 
-  // Indices: connect consecutive rings
   let triIdx = 0;
   for (let si = 0; si < segments - 1; si++) {
     for (let vi = 0; vi < sides; vi++) {
@@ -125,25 +165,34 @@ function buildLineMesh(device: pc.GraphicsDevice, src: pc.Vec3, tgt: pc.Vec3): p
 }
 
 /**
- * Build a 1×N emissive-alpha texture containing two bright gaussian pulses.
- * Tiled along the edge's V axis + scrolled over time, this gives a clean
- * "packet flowing down a wire" effect for every edge.
+ * 1×N flow texture: a constant rail (so the wire is always visible) plus
+ * three sharp gaussian pulses that scroll. The new texture is brighter at
+ * the pulse peaks and uses a wider asymmetric tail so packets read as
+ * comet-style streaks instead of plain dots.
  */
 function createFlowTexture(device: pc.GraphicsDevice): pc.Texture {
   const width  = 1;
-  const height = 128;
+  const height = 256;
   const data   = new Uint8Array(width * height * 4);
 
-  const pulses = [0.25, 0.75]; // two packets per tile
-  const sigma  = 0.04;
+  const pulses = [0.15, 0.50, 0.82];
 
   for (let y = 0; y < height; y++) {
     const v = y / height;
-    let intensity = 0.40; // base rail glow
+
+    // Base rail glow — visible always.
+    let intensity = 0.55;
+
+    // Comet pulses with sharp head + long tail (asymmetric gaussian).
     for (const c of pulses) {
-      const d = v - c;
-      intensity += Math.exp(-(d * d) / (2 * sigma * sigma));
+      let d = v - c;
+      // Wrap distance for seamless tiling
+      if (d >  0.5) d -= 1;
+      if (d < -0.5) d += 1;
+      const sigma = d > 0 ? 0.012 : 0.055; // tight head, long trailing tail
+      intensity += Math.exp(-(d * d) / (2 * sigma * sigma)) * 1.4;
     }
+
     intensity = Math.min(1, intensity);
     const idx = y * 4;
     data[idx + 0] = 255;
@@ -167,22 +216,73 @@ function createFlowTexture(device: pc.GraphicsDevice): pc.Texture {
   return tex;
 }
 
+/**
+ * Custom emissive chunk for edges. Combines:
+ *   - the scrolling flow texture (sampled along V)
+ *   - a per-vertex endpoint fade (carried in UV0.x)
+ *   - a global breathing pulse synced to uTime
+ *   - a subtle fresnel falloff so the edge "rim" is brightest when seen
+ *     edge-on, giving the tube a glassy neon-tube feel
+ */
+const EDGE_EMISSIVE_PS = /* glsl */ `
+  uniform sampler2D texture_emissiveMap;
+  uniform vec3  material_emissive;
+  uniform vec2  material_emissiveMapTiling;
+  uniform vec2  material_emissiveMapOffset;
+  uniform float uEdgeIntensity;
+  uniform float uEdgeTime;
+  uniform float uEdgePulsePhase;
+
+  void getEmission() {
+      vec2 uv = vUv0 * material_emissiveMapTiling + material_emissiveMapOffset;
+      vec4 flow = texture2D(texture_emissiveMap, uv);
+
+      // Per-vertex endpoint fade (UV.x packs taper 0..1; squaring softens it).
+      float endpointFade = smoothstep(0.0, 0.5, vUv0.x);
+
+      // Subtle global breathing — slightly different phase per edge so the
+      // network doesn't strobe in unison.
+      float breathe = 0.85 + 0.30 * sin(uEdgeTime * 1.7 + uEdgePulsePhase);
+
+      // Fresnel rim: brightest along silhouette
+      vec3 N = normalize(vNormalW);
+      vec3 V = normalize(view_position - vPositionW);
+      float ndotv = clamp(abs(dot(N, V)), 0.0, 1.0);
+      float fresnel = pow(1.0 - ndotv, 1.4);
+
+      float intensity = (flow.a + 0.10) * uEdgeIntensity * breathe * endpointFade;
+      intensity *= (0.55 + 0.65 * fresnel);
+
+      dEmission = material_emissive * intensity;
+  }
+`;
+
 function makeFlowMaterial(
   device: pc.GraphicsDevice,
   texture: pc.Texture,
   colorHex: string,
+  intensity: number,
+  phase: number,
 ): pc.StandardMaterial {
   void device;
   const color = hexToColor(colorHex);
   const mat   = new pc.StandardMaterial();
-  mat.diffuse            = new pc.Color(color.r * 0.4, color.g * 0.4, color.b * 0.4);
+  mat.diffuse            = new pc.Color(0, 0, 0);
   mat.emissiveMap        = texture;
   mat.emissive           = color;
-  mat.emissiveMapTiling  = new pc.Vec2(1, 2.5);
+  mat.emissiveMapTiling  = new pc.Vec2(1, 2.0);
   mat.emissiveMapOffset  = new pc.Vec2(0, 0);
   mat.useLighting        = false;
   mat.blendType          = pc.BLEND_ADDITIVEALPHA;
   mat.depthWrite         = false;
+  mat.cull               = pc.CULLFACE_NONE;
+
+  (mat.chunks as Record<string, string>).emissivePS = EDGE_EMISSIVE_PS;
+
+  mat.setParameter('uEdgeIntensity',   intensity);
+  mat.setParameter('uEdgeTime',        0.0);
+  mat.setParameter('uEdgePulsePhase',  phase);
+
   mat.update();
   return mat;
 }
@@ -211,7 +311,9 @@ export class EdgeFactory {
   ]);
   private flowTexture: pc.Texture | null = null;
   private flowMaterials: FlowMatEntry[] = [];
+  private allMaterials: pc.StandardMaterial[] = [];
   private lodRecords: EdgeLodRecord[] = [];
+  private edgeTime = 0;
 
   constructor(app: pc.Application) {
     this.app = app;
@@ -229,6 +331,8 @@ export class EdgeFactory {
     nodeEntities: Map<string, pc.Entity>,
     parent: pc.Entity,
   ): Map<string, pc.Entity> {
+    let phaseCounter = 0;
+
     for (const edge of snapshot.edges) {
       const srcEntity = nodeEntities.get(edge.source);
       const tgtEntity = nodeEntities.get(edge.target);
@@ -239,17 +343,14 @@ export class EdgeFactory {
       const src = srcEntity.getPosition();
       const tgt = tgtEntity.getPosition();
 
-      // Quadratic Bézier control point: midpoint lifted high in +Y so that
-      // edges arc cleanly over the ground plane (isometric-like look).
       const dist = src.distance(tgt);
-      const arc  = Math.min(dist * 0.35, 60);
+      const arc  = Math.min(dist * ARC_FACTOR, ARC_MAX);
       const ctrl = new pc.Vec3(
         (src.x + tgt.x) * 0.5,
         (src.y + tgt.y) * 0.5 + arc,
         (src.z + tgt.z) * 0.5,
       );
 
-      // Sample curve points
       const pts: pc.Vec3[] = [];
       for (let i = 0; i <= TUBE_SEGMENTS; i++) {
         pts.push(sampleBezier(src, ctrl, tgt, i / TUBE_SEGMENTS));
@@ -260,8 +361,18 @@ export class EdgeFactory {
       const tubeMesh = buildTubeMesh(this.app.graphicsDevice, pts, cfg.radius);
       const lineMesh = buildLineMesh(this.app.graphicsDevice, src, tgt);
 
-      const mat = makeFlowMaterial(this.app.graphicsDevice, this.getFlowTexture(), cfg.color);
+      // Slight phase per edge so breathing doesn't strobe in unison.
+      const phase = (phaseCounter++ * 0.91) % (Math.PI * 2);
+
+      const mat = makeFlowMaterial(
+        this.app.graphicsDevice,
+        this.getFlowTexture(),
+        cfg.color,
+        cfg.intensity,
+        phase,
+      );
       this.flowMaterials.push({ material: mat, speed: cfg.flowSpeed });
+      this.allMaterials.push(mat);
 
       const mi = new pc.MeshInstance(tubeMesh, mat);
       const entity = new pc.Entity(`edge:${edge.id}`);
@@ -274,8 +385,6 @@ export class EdgeFactory {
       parent.addChild(entity);
       this.edgeEntities.set(edge.id, entity);
 
-      // Midpoint for LOD distance checks — use the arc apex so the edge stays
-      // visible from typical camera angles looking down on the plane.
       const midpoint = new pc.Vec3(
         (src.x + tgt.x) * 0.5,
         (src.y + tgt.y) * 0.5 + arc * 0.5,
@@ -287,13 +396,17 @@ export class EdgeFactory {
     return this.edgeEntities;
   }
 
-  /** Call each frame with dt in seconds — scrolls the flow pulses. */
+  /** Call each frame with dt in seconds — scrolls the flow pulses + ticks shader time. */
   update(dt: number): void {
+    this.edgeTime += dt;
+
     for (const { material, speed } of this.flowMaterials) {
-      if (speed <= 0) continue;
-      const offset = material.emissiveMapOffset;
-      offset.y = (offset.y - dt * speed + 1) % 1;
-      material.emissiveMapOffset = offset;
+      if (speed > 0) {
+        const offset = material.emissiveMapOffset;
+        offset.y = (offset.y - dt * speed + 1) % 1;
+        material.emissiveMapOffset = offset;
+      }
+      material.setParameter('uEdgeTime', this.edgeTime);
       material.update();
     }
   }
@@ -324,6 +437,7 @@ export class EdgeFactory {
     this.curvePoints.clear();
     this.edgeKinds.clear();
     this.flowMaterials = [];
+    this.allMaterials = [];
     this.lodRecords = [];
   }
 }
