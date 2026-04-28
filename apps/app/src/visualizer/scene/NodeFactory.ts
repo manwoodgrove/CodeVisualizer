@@ -102,6 +102,7 @@ interface NodeData {
   pulseDur: number;
   // Highlight state
   highlighted: boolean;
+  labelEntity?: pc.Entity;
 }
 
 export class NodeFactory {
@@ -142,7 +143,7 @@ export class NodeFactory {
 
       parent.addChild(entity);
 
-      this.addLabel(entity, node.name, baseScale, fontAsset);
+      const labelEntity = this.addLabel(entity, node.name, baseScale, fontAsset);
 
       // Deterministic per-node phases derived from a counter so the same
       // graph always animates the same way (helps reproducibility / tests).
@@ -163,6 +164,7 @@ export class NodeFactory {
         pulseElapsed: 0,
         pulseDur: 600,
         highlighted: false,
+        labelEntity,
       };
       this.nodeMap.set(node.id, data);
       this.entityToId.set(entity, node.id);
@@ -177,8 +179,8 @@ export class NodeFactory {
     name: string,
     baseScale: number,
     fontAsset?: pc.Asset,
-  ): void {
-    if (!fontAsset) return;
+  ): pc.Entity | undefined {
+    if (!fontAsset) return undefined;
 
     const label = new pc.Entity('label');
     label.addComponent('element', {
@@ -195,6 +197,7 @@ export class NodeFactory {
     });
     label.setLocalPosition(0, baseScale + 0.5, 0);
     parent.addChild(label);
+    return label;
   }
 
   setHighlight(nodeId: string, on: boolean): void {
@@ -277,7 +280,7 @@ export class NodeFactory {
     const camPos = camera.getPosition();
 
     for (const data of this.nodeMap.values()) {
-      const labelEntity = data.entity.findByName('label');
+      const labelEntity = data.labelEntity;
       if (!labelEntity) continue;
 
       const visible = false;
