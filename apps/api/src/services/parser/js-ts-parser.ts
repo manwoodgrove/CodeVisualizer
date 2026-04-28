@@ -37,10 +37,13 @@ function moduleLocalId(filePath: string): string {
   return `MODULE:${filePath}:1:module`;
 }
 
-function countComplexity(node: TSESTree.Node): number {
+async function countComplexity(node: TSESTree.Node): Promise<number> {
   let count = 0;
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  const stack: TSESTree.Node[] = [node];
+  let ops = 0;
+
+  while (stack.length > 0) {
+    const n = stack.pop()!;
     switch (n.type) {
       case 'IfStatement':
       case 'ForStatement':
@@ -66,26 +69,35 @@ function countComplexity(node: TSESTree.Node): number {
       default:
         break;
     }
+
     for (const key of Object.keys(n)) {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
+        for (let i = child.length - 1; i >= 0; i--) {
+          const c = child[i];
+          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
+        stack.push(child as TSESTree.Node);
       }
     }
+
+    if (++ops >= 500) {
+      ops = 0;
+      await new Promise(r => setImmediate(r));
+    }
   }
-  walk(node);
   return count + 1;
 }
 
-function extractCallees(node: TSESTree.Node): string[] {
+async function extractCallees(node: TSESTree.Node): Promise<string[]> {
   const callees: string[] = [];
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  const stack: TSESTree.Node[] = [node];
+  let ops = 0;
+
+  while (stack.length > 0) {
+    const n = stack.pop()!;
     if (n.type === 'CallExpression') {
       const callee = (n as TSESTree.CallExpression).callee;
       if (callee.type === 'Identifier') {
@@ -101,19 +113,24 @@ function extractCallees(node: TSESTree.Node): string[] {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
+        for (let i = child.length - 1; i >= 0; i--) {
+          const c = child[i];
+          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
+        stack.push(child as TSESTree.Node);
       }
     }
+
+    if (++ops >= 500) {
+      ops = 0;
+      await new Promise(r => setImmediate(r));
+    }
   }
-  walk(node);
   return callees;
 }
 
-export function parseFile(filePath: string, source: string): ParseResult {
+export async function parseFile(filePath: string, source: string): Promise<ParseResult> {
   const nodes: RawNode[] = [];
   const edges: RawEdge[] = [];
   const importMap: Record<string, string> = {};
@@ -219,13 +236,13 @@ export function parseFile(filePath: string, source: string): ParseResult {
       } else {
         decl = (stmt as TSESTree.ExportDefaultDeclaration).declaration;
       }
-      if (decl) processTopLevelDecl(decl, true);
+      if (decl) await processTopLevelDecl(decl, true);
     } else {
-      processTopLevelDecl(stmt, false);
+      await processTopLevelDecl(stmt, false);
     }
   }
 
-  function processTopLevelDecl(decl: TSESTree.Node, forceExported: boolean): void {
+  async function processTopLevelDecl(decl: TSESTree.Node, forceExported: boolean): Promise<void> {
     if (decl.type === 'FunctionDeclaration') {
       const fn = decl as TSESTree.FunctionDeclaration;
       if (!fn.id) return;
@@ -243,10 +260,10 @@ export function parseFile(filePath: string, source: string): ParseResult {
         lineStart,
         lineEnd,
         linesOfCode: lineEnd - lineStart + 1,
-        cyclomaticComplexity: countComplexity(fn.body ?? fn),
+        cyclomaticComplexity: await countComplexity(fn.body ?? fn),
       });
       // CALL edges from this function
-      for (const callee of extractCallees(fn.body ?? fn)) {
+      for (const callee of await extractCallees(fn.body ?? fn)) {
         edges.push({ sourceLocalId: localId, targetName: callee, kind: 'CALL', weight: 1 });
       }
     } else if (decl.type === 'ClassDeclaration') {
@@ -299,10 +316,10 @@ export function parseFile(filePath: string, source: string): ParseResult {
             lineStart: mLineStart,
             lineEnd: mLineEnd,
             linesOfCode: mLineEnd - mLineStart + 1,
-            cyclomaticComplexity: countComplexity(method.value),
+            cyclomaticComplexity: await countComplexity(method.value),
           });
           // CALL edges from method
-          for (const callee of extractCallees(method.value)) {
+          for (const callee of await extractCallees(method.value)) {
             edges.push({ sourceLocalId: methodLocalId, targetName: callee, kind: 'CALL', weight: 1 });
           }
         }
@@ -330,9 +347,9 @@ export function parseFile(filePath: string, source: string): ParseResult {
             lineStart,
             lineEnd,
             linesOfCode: lineEnd - lineStart + 1,
-            cyclomaticComplexity: countComplexity(init),
+            cyclomaticComplexity: await countComplexity(init),
           });
-          for (const callee of extractCallees(init)) {
+          for (const callee of await extractCallees(init)) {
             edges.push({ sourceLocalId: localId, targetName: callee, kind: 'CALL', weight: 1 });
           }
         } else if (isExported) {
