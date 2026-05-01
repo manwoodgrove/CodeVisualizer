@@ -78,6 +78,7 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
       });
 
       io.to(jobId).emit('job:done', { jobId, repoId });
+      console.log(`[import ${jobId}] DONE`);
     },
     { connection: workerConnection, concurrency: 2 }
   );

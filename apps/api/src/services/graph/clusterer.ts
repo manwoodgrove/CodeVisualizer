@@ -58,10 +58,6 @@ export function clusterGraph(
       const list = communityToNodeIds.get(nextSyntheticId) ?? [];
       list.push(n.id);
       communityToNodeIds.set(nextSyntheticId, list);
-
-      // OPTIMIZATION: map the community directly here to avoid quadratic search
-      communities[n.id] = nextSyntheticId;
-
       nextSyntheticId++;
     }
   }
@@ -111,7 +107,7 @@ export function clusterGraph(
 
   // Assign clusterId to nodes
   const nodesWithClusters = nodes.map((n) => {
-    const communityId = communities[n.id];
+    const communityId = communities[n.id] ?? findNodeCommunity(n.id, communityToNodeIds);
     const clusterId = communityId !== undefined
       ? communityToClusterId.get(communityId) ?? null
       : null;
@@ -121,3 +117,12 @@ export function clusterGraph(
   return { clusters, nodesWithClusters };
 }
 
+function findNodeCommunity(
+  nodeId: string,
+  communityToNodeIds: Map<number, string[]>,
+): number | undefined {
+  for (const [communityId, ids] of communityToNodeIds) {
+    if (ids.includes(nodeId)) return communityId;
+  }
+  return undefined;
+}

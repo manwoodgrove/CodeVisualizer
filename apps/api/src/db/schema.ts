@@ -2,7 +2,6 @@ import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 
 export const repos = sqliteTable('repos', {
   id: text('id').primaryKey(),
-  ownerId: text('owner_id').notNull(),
   url: text('url').notNull(),
   name: text('name').notNull(),
   branch: text('branch').notNull(),
