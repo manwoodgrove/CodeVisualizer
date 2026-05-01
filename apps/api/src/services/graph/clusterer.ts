@@ -58,7 +58,10 @@ export function clusterGraph(
       const list = communityToNodeIds.get(nextSyntheticId) ?? [];
       list.push(n.id);
       communityToNodeIds.set(nextSyntheticId, list);
+
+      // OPTIMIZATION: map the community directly here to avoid quadratic search
       communities[n.id] = nextSyntheticId;
+
       nextSyntheticId++;
     }
   }
@@ -117,3 +120,4 @@ export function clusterGraph(
 
   return { clusters, nodesWithClusters };
 }
+
