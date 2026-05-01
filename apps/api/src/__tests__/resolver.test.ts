@@ -5,13 +5,13 @@ import { enrichGraph } from '../services/graph/enricher.js';
 import type { FetchedFile } from '../services/github/fetcher.js';
 
 describe('INHERITANCE fallback resolution (heuristic, no TypeChecker)', () => {
-  it('prefers same-file match when subclass and superclass are in the same file', () => {
+  it('prefers same-file match when subclass and superclass are in the same file', async () => {
     const source = `
 class Base {}
 class Child extends Base {}
 `.trim();
 
-    const parseResult = parseFile('single.ts', source);
+    const parseResult = await parseFile('single.ts', source);
     const { nodes, edges } = buildGraph([parseResult]);
     // No files passed — TypeChecker resolver is disabled, pure heuristic path
     const { nodes: enrichedNodes, edges: enrichedEdges } = enrichGraph(nodes, edges);
@@ -29,15 +29,15 @@ class Child extends Base {}
     expect(inheritanceEdge?.resolved).toBe(true);
   });
 
-  it('falls back deterministically to the first-seen node when superclass is defined in multiple files', () => {
+  it('falls back deterministically to the first-seen node when superclass is defined in multiple files', async () => {
     // Base defined in two files; Child is in a third file with no local Base
     const aSource = `export class Base {}`;
     const bSource = `export class Base {}`;
     const cSource = `export class Child extends Base {}`;
 
-    const parseA = parseFile('a.ts', aSource);
-    const parseB = parseFile('b.ts', bSource);
-    const parseC = parseFile('c.ts', cSource);
+    const parseA = await parseFile('a.ts', aSource);
+    const parseB = await parseFile('b.ts', bSource);
+    const parseC = await parseFile('c.ts', cSource);
 
     // a.ts is processed first, so its Base node is the "first seen"
     const { nodes, edges } = buildGraph([parseA, parseB, parseC]);
