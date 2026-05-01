@@ -1,1 +1,0 @@
-The extracted `FileParser` class handles parsing cleanly while encapsulating states. The codebase passed all tests and I'm ready to document learnings and finish.
