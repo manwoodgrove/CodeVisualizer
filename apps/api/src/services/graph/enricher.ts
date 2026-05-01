@@ -16,7 +16,9 @@ export function enrichGraph(
   const nodeById = new Map<string, GraphNode>();
   for (const n of nodes) nodeById.set(n.id, n);
 
-  // Name -> nodes (for CALL resolution)
+  // CALL resolution lookups:
+  // - nodesByName: name -> filePath -> node
+  // - firstNodeByName: first node seen for a given name (fallback)
   const nodesByName = new Map<string, Map<string, GraphNode>>();
   const firstNodeByName = new Map<string, GraphNode>();
 
@@ -28,11 +30,11 @@ export function enrichGraph(
     }
     // If there are multiple nodes with the same name in the same file, we keep the first one we see.
     if (!fileMap.has(n.filePath)) {
-        fileMap.set(n.filePath, n);
+      fileMap.set(n.filePath, n);
     }
 
     if (!firstNodeByName.has(n.name)) {
-        firstNodeByName.set(n.name, n);
+      firstNodeByName.set(n.name, n);
     }
   }
 
