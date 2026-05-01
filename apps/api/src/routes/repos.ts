@@ -114,6 +114,7 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       const repoId = await createRepo({
+        ownerId: request.authContext!.user.login,
         url,
         name: repoInfo.name,
         branch: branch ?? 'main',
@@ -127,8 +128,8 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/repos
-  fastify.get('/api/repos', { preHandler: requireAuth }, async (_request, reply) => {
-    const repos = await listRepos();
+  fastify.get('/api/repos', { preHandler: requireAuth }, async (request, reply) => {
+    const repos = await listRepos(request.authContext!.user.login);
     return reply.send({ repos });
   });
 
@@ -137,7 +138,7 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
     '/api/repos/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const repo = await getRepo(request.params.id);
+      const repo = await getRepo(request.params.id, request.authContext!.user.login);
       if (!repo) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Repo not found' } });
       }
@@ -156,6 +157,10 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params;
       const { module: moduleId, depth: depthStr } = request.query;
 
+      const repo = await getRepo(id, request.authContext!.user.login);
+      if (!repo) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Repo not found' } });
+      }
       const snapshot = await getSnapshot(id);
       if (!snapshot) {
         return reply.status(404).send({
@@ -198,6 +203,10 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const repo = await getRepo(request.params.id, request.authContext!.user.login);
+      if (!repo) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Repo not found' } });
+      }
       const snapshot = await getSnapshot(request.params.id);
       if (!snapshot) {
         return reply.status(404).send({
