@@ -3,6 +3,7 @@ import { parseFile } from '../services/parser/js-ts-parser.js';
 import { buildGraph } from '../services/graph/builder.js';
 import { enrichGraph } from '../services/graph/enricher.js';
 import type { FetchedFile } from '../services/github/fetcher.js';
+import { buildTypeCheckResolver } from '../services/graph/typecheck-resolver.js';
 
 describe('INHERITANCE fallback resolution (heuristic, no TypeChecker)', () => {
   it('prefers same-file match when subclass and superclass are in the same file', async () => {
@@ -115,5 +116,18 @@ function y() { return x(); }
 
     expect(callEdge).toBeDefined();
     expect(callEdge?.resolved).toBe(true);
+  });
+
+  it('returns null if an error is thrown during resolve()', () => {
+    const files: FetchedFile[] = [
+      { path: 'test.ts', content: 'function foo() { bar(); }', size: 100 }
+    ];
+    const resolver = buildTypeCheckResolver({ files, nodes: [] });
+
+    // Passing undefined as the file path forces `normalizePath` to throw
+    // an error (e.g. `undefined.startsWith is not a function`),
+    // which tests the catch block returning null.
+    const result = resolver.resolve(undefined as any, 'bar', 1);
+    expect(result).toBeNull();
   });
 });
