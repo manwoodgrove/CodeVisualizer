@@ -202,7 +202,7 @@ const githubAuth: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         .clearCookie('oauth_state', { path: '/' })
         .setCookie('sid', sessionId, {
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: 'strict',
           secure: process.env.NODE_ENV === 'production',
           signed: true,
           path: '/',

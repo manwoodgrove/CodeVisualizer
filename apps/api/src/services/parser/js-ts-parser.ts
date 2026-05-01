@@ -29,6 +29,12 @@ export interface ParseResult {
   importMap: Record<string, string>;
 }
 
+const CHUNK_SIZE = 500;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => setImmediate(resolve));
+}
+
 function makeLocalId(kind: NodeKind, filePath: string, lineStart: number, name: string): string {
   return `${kind}:${filePath}:${lineStart}:${name}`;
 }
@@ -37,10 +43,13 @@ function moduleLocalId(filePath: string): string {
   return `MODULE:${filePath}:1:module`;
 }
 
-function countComplexity(node: TSESTree.Node): number {
+async function countComplexity(node: TSESTree.Node): Promise<number> {
   let count = 0;
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  const stack: TSESTree.Node[] = [node];
+  let ops = 0;
+
+  while (stack.length > 0) {
+    const n = stack.pop()!;
     switch (n.type) {
       case 'IfStatement':
       case 'ForStatement':
@@ -66,26 +75,35 @@ function countComplexity(node: TSESTree.Node): number {
       default:
         break;
     }
+
     for (const key of Object.keys(n)) {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
+        for (let i = child.length - 1; i >= 0; i--) {
+          const c = child[i];
+          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
+        stack.push(child as TSESTree.Node);
       }
     }
+
+    if (++ops >= CHUNK_SIZE) {
+      ops = 0;
+      await yieldToEventLoop();
+    }
   }
-  walk(node);
   return count + 1;
 }
 
-function extractCallees(node: TSESTree.Node): string[] {
+async function extractCallees(node: TSESTree.Node): Promise<string[]> {
   const callees: string[] = [];
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  const stack: TSESTree.Node[] = [node];
+  let ops = 0;
+
+  while (stack.length > 0) {
+    const n = stack.pop()!;
     if (n.type === 'CallExpression') {
       const callee = (n as TSESTree.CallExpression).callee;
       if (callee.type === 'Identifier') {
@@ -101,15 +119,20 @@ function extractCallees(node: TSESTree.Node): string[] {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
+        for (let i = child.length - 1; i >= 0; i--) {
+          const c = child[i];
+          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
+        stack.push(child as TSESTree.Node);
       }
     }
+
+    if (++ops >= CHUNK_SIZE) {
+      ops = 0;
+      await yieldToEventLoop();
+    }
   }
-  walk(node);
   return callees;
 }
 

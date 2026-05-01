@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import type { GraphSnapshot, RepoMeta } from '@cv/types';
 import { db } from './client.js';
@@ -7,6 +7,7 @@ import { graphSnapshots, repos } from './schema.js';
 function toRepoMeta(row: typeof repos.$inferSelect): RepoMeta {
   return {
     id: row.id,
+    ownerId: row.ownerId,
     url: row.url,
     name: row.name,
     branch: row.branch,
@@ -20,6 +21,7 @@ function toRepoMeta(row: typeof repos.$inferSelect): RepoMeta {
 }
 
 export async function createRepo(input: {
+  ownerId: string;
   url: string;
   name: string;
   branch: string;
@@ -27,6 +29,7 @@ export async function createRepo(input: {
   const id = nanoid();
   const now = Date.now();
   await db.insert(repos).values({
+    ownerId: input.ownerId,
     id,
     url: input.url,
     name: input.name,
@@ -58,14 +61,14 @@ export async function updateRepoStatus(
     .where(eq(repos.id, id));
 }
 
-export async function getRepo(id: string): Promise<RepoMeta | null> {
-  const rows = await db.select().from(repos).where(eq(repos.id, id));
+export async function getRepo(id: string, ownerId: string): Promise<RepoMeta | null> {
+  const rows = await db.select().from(repos).where(and(eq(repos.id, id), eq(repos.ownerId, ownerId)));
   if (rows.length === 0) return null;
   return toRepoMeta(rows[0]);
 }
 
-export async function listRepos(): Promise<RepoMeta[]> {
-  const rows = await db.select().from(repos);
+export async function listRepos(ownerId: string): Promise<RepoMeta[]> {
+  const rows = await db.select().from(repos).where(eq(repos.ownerId, ownerId));
   return rows.map(toRepoMeta);
 }
 
