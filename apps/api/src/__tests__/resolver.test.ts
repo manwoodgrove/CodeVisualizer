@@ -5,15 +5,15 @@ import { enrichGraph } from '../services/graph/enricher.js';
 import type { FetchedFile } from '../services/github/fetcher.js';
 
 describe('TypeChecker-based cross-file CALL resolver', () => {
-  it('resolves a cross-file CALL edge from b.ts caller() -> a.ts foo()', () => {
+  it('resolves a cross-file CALL edge from b.ts caller() -> a.ts foo()', async () => {
     const aSource = `export function foo() { return 42; }`;
     const bSource = `import { foo } from './a.js';\nexport function caller() { return foo(); }`;
 
     const aFile: FetchedFile = { path: 'a.ts', content: aSource, size: aSource.length };
     const bFile: FetchedFile = { path: 'b.ts', content: bSource, size: bSource.length };
 
-    const parseA = parseFile('a.ts', aSource);
-    const parseB = parseFile('b.ts', bSource);
+    const parseA = await parseFile('a.ts', aSource);
+    const parseB = await parseFile('b.ts', bSource);
 
     const { nodes, edges } = buildGraph([parseA, parseB]);
     const { nodes: enrichedNodes, edges: enrichedEdges } = enrichGraph(nodes, edges, [aFile, bFile]);
@@ -35,7 +35,7 @@ describe('TypeChecker-based cross-file CALL resolver', () => {
     expect(callEdge?.resolved).toBe(true);
   });
 
-  it('still resolves same-file CALL edges via fallback heuristic', () => {
+  it('still resolves same-file CALL edges via fallback heuristic', async () => {
     const cSource = `
 function x() { return 1; }
 function y() { return x(); }
@@ -43,7 +43,7 @@ function y() { return x(); }
 
     const cFile: FetchedFile = { path: 'c.ts', content: cSource, size: cSource.length };
 
-    const parseC = parseFile('c.ts', cSource);
+    const parseC = await parseFile('c.ts', cSource);
     const { nodes, edges } = buildGraph([parseC]);
     const { nodes: enrichedNodes, edges: enrichedEdges } = enrichGraph(nodes, edges, [cFile]);
 

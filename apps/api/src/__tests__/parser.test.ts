@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseFile } from '../services/parser/js-ts-parser.js';
 
 describe('parseFile', () => {
-  it('parses a class with methods and call edges', () => {
+  it('parses a class with methods and call edges', async () => {
     const source = `
 export class Animal {
   constructor(public name: string) {}
@@ -23,7 +23,7 @@ function greet(name: string): string {
 }
 `.trim();
 
-    const result = parseFile('src/animal.ts', source);
+    const result = await parseFile('src/animal.ts', source);
 
     expect(result.filePath).toBe('src/animal.ts');
 
@@ -47,7 +47,7 @@ function greet(name: string): string {
     expect(calleeNames).toContain('greet');
   });
 
-  it('parses import declarations and export variables', () => {
+  it('parses import declarations and export variables', async () => {
     const source = `
 import { readFile } from 'fs/promises';
 import path from 'path';
@@ -61,7 +61,7 @@ export async function loadConfig(): Promise<string> {
 }
 `.trim();
 
-    const result = parseFile('src/config.ts', source);
+    const result = await parseFile('src/config.ts', source);
 
     // Import edges from module
     const importEdges = result.edges.filter((e) => e.kind === 'IMPORT');
@@ -86,7 +86,7 @@ export async function loadConfig(): Promise<string> {
     expect(fnNode?.exported).toBe(true);
   });
 
-  it('parses arrow functions with nested calls', () => {
+  it('parses arrow functions with nested calls', async () => {
     const source = `
 function add(a: number, b: number): number {
   return a + b;
@@ -103,7 +103,7 @@ export const compute = (x: number, y: number): number => {
 };
 `.trim();
 
-    const result = parseFile('src/math.ts', source);
+    const result = await parseFile('src/math.ts', source);
 
     const fnNodes = result.nodes.filter((n) => n.kind === 'FUNCTION');
     const fnNames = fnNodes.map((n) => n.name);

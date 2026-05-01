@@ -44,7 +44,7 @@ export async function runImport(ctx: ImportContext): Promise<GraphSnapshot> {
   const parseResults = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const result = parseFile(file.path, file.content);
+    const result = await parseFile(file.path, file.content);
     parseResults.push(result);
     onProgress('parse', Math.round(((i + 1) / files.length) * 100));
   }
