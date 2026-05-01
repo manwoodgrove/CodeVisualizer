@@ -29,6 +29,12 @@ export interface ParseResult {
   importMap: Record<string, string>;
 }
 
+const CHUNK_SIZE = 500;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => setImmediate(resolve));
+}
+
 function makeLocalId(kind: NodeKind, filePath: string, lineStart: number, name: string): string {
   return `${kind}:${filePath}:${lineStart}:${name}`;
 }
@@ -83,9 +89,9 @@ async function countComplexity(node: TSESTree.Node): Promise<number> {
       }
     }
 
-    if (++ops >= 500) {
+    if (++ops >= CHUNK_SIZE) {
       ops = 0;
-      await new Promise(r => setImmediate(r));
+      await yieldToEventLoop();
     }
   }
   return count + 1;
@@ -122,9 +128,9 @@ async function extractCallees(node: TSESTree.Node): Promise<string[]> {
       }
     }
 
-    if (++ops >= 500) {
+    if (++ops >= CHUNK_SIZE) {
       ops = 0;
-      await new Promise(r => setImmediate(r));
+      await yieldToEventLoop();
     }
   }
   return callees;
