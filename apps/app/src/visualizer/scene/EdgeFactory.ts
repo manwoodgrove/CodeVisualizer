@@ -1,6 +1,12 @@
 import * as pc from 'playcanvas';
 import type { GraphSnapshot, EdgeKind } from '@cv/types';
-import { hexToColor } from '../../utils/color.js';
+
+function hexToColor(hex: string): pc.Color {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return new pc.Color(r, g, b);
+}
 
 // Saturated neon edge palette. Each kind reads as a distinct "wire" running
 // between nodes. Colors are pushed slightly toward 1.0 so additive blending

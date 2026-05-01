@@ -29,12 +29,6 @@ export interface ParseResult {
   importMap: Record<string, string>;
 }
 
-const CHUNK_SIZE = 500;
-
-function yieldToEventLoop(): Promise<void> {
-  return new Promise<void>(resolve => setImmediate(resolve));
-}
-
 function makeLocalId(kind: NodeKind, filePath: string, lineStart: number, name: string): string {
   return `${kind}:${filePath}:${lineStart}:${name}`;
 }
@@ -43,13 +37,10 @@ function moduleLocalId(filePath: string): string {
   return `MODULE:${filePath}:1:module`;
 }
 
-async function countComplexity(node: TSESTree.Node): Promise<number> {
+function countComplexity(node: TSESTree.Node): number {
   let count = 0;
-  const stack: TSESTree.Node[] = [node];
-  let ops = 0;
-
-  while (stack.length > 0) {
-    const n = stack.pop()!;
+  function walk(n: TSESTree.Node | null | undefined): void {
+    if (!n || typeof n !== 'object') return;
     switch (n.type) {
       case 'IfStatement':
       case 'ForStatement':
@@ -75,35 +66,26 @@ async function countComplexity(node: TSESTree.Node): Promise<number> {
       default:
         break;
     }
-
     for (const key of Object.keys(n)) {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (let i = child.length - 1; i >= 0; i--) {
-          const c = child[i];
-          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        stack.push(child as TSESTree.Node);
+        walk(child as TSESTree.Node);
       }
     }
-
-    if (++ops >= CHUNK_SIZE) {
-      ops = 0;
-      await yieldToEventLoop();
-    }
   }
+  walk(node);
   return count + 1;
 }
 
-async function extractCallees(node: TSESTree.Node): Promise<string[]> {
+function extractCallees(node: TSESTree.Node): string[] {
   const callees: string[] = [];
-  const stack: TSESTree.Node[] = [node];
-  let ops = 0;
-
-  while (stack.length > 0) {
-    const n = stack.pop()!;
+  function walk(n: TSESTree.Node | null | undefined): void {
+    if (!n || typeof n !== 'object') return;
     if (n.type === 'CallExpression') {
       const callee = (n as TSESTree.CallExpression).callee;
       if (callee.type === 'Identifier') {
@@ -119,24 +101,19 @@ async function extractCallees(node: TSESTree.Node): Promise<string[]> {
       if (key === 'parent') continue;
       const child = (n as unknown as Record<string, unknown>)[key];
       if (Array.isArray(child)) {
-        for (let i = child.length - 1; i >= 0; i--) {
-          const c = child[i];
-          if (c && typeof c === 'object' && 'type' in c) stack.push(c as TSESTree.Node);
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
         }
       } else if (child && typeof child === 'object' && 'type' in child) {
-        stack.push(child as TSESTree.Node);
+        walk(child as TSESTree.Node);
       }
     }
-
-    if (++ops >= CHUNK_SIZE) {
-      ops = 0;
-      await yieldToEventLoop();
-    }
   }
+  walk(node);
   return callees;
 }
 
-export async function parseFile(filePath: string, source: string): Promise<ParseResult> {
+export function parseFile(filePath: string, source: string): ParseResult {
   const nodes: RawNode[] = [];
   const edges: RawEdge[] = [];
   const importMap: Record<string, string> = {};
@@ -242,13 +219,13 @@ export async function parseFile(filePath: string, source: string): Promise<Parse
       } else {
         decl = (stmt as TSESTree.ExportDefaultDeclaration).declaration;
       }
-      if (decl) await processTopLevelDecl(decl, true);
+      if (decl) processTopLevelDecl(decl, true);
     } else {
-      await processTopLevelDecl(stmt, false);
+      processTopLevelDecl(stmt, false);
     }
   }
 
-  async function processTopLevelDecl(decl: TSESTree.Node, forceExported: boolean): Promise<void> {
+  function processTopLevelDecl(decl: TSESTree.Node, forceExported: boolean): void {
     if (decl.type === 'FunctionDeclaration') {
       const fn = decl as TSESTree.FunctionDeclaration;
       if (!fn.id) return;
@@ -266,10 +243,10 @@ export async function parseFile(filePath: string, source: string): Promise<Parse
         lineStart,
         lineEnd,
         linesOfCode: lineEnd - lineStart + 1,
-        cyclomaticComplexity: await countComplexity(fn.body ?? fn),
+        cyclomaticComplexity: countComplexity(fn.body ?? fn),
       });
       // CALL edges from this function
-      for (const callee of await extractCallees(fn.body ?? fn)) {
+      for (const callee of extractCallees(fn.body ?? fn)) {
         edges.push({ sourceLocalId: localId, targetName: callee, kind: 'CALL', weight: 1 });
       }
     } else if (decl.type === 'ClassDeclaration') {
@@ -322,10 +299,10 @@ export async function parseFile(filePath: string, source: string): Promise<Parse
             lineStart: mLineStart,
             lineEnd: mLineEnd,
             linesOfCode: mLineEnd - mLineStart + 1,
-            cyclomaticComplexity: await countComplexity(method.value),
+            cyclomaticComplexity: countComplexity(method.value),
           });
           // CALL edges from method
-          for (const callee of await extractCallees(method.value)) {
+          for (const callee of extractCallees(method.value)) {
             edges.push({ sourceLocalId: methodLocalId, targetName: callee, kind: 'CALL', weight: 1 });
           }
         }
@@ -353,9 +330,9 @@ export async function parseFile(filePath: string, source: string): Promise<Parse
             lineStart,
             lineEnd,
             linesOfCode: lineEnd - lineStart + 1,
-            cyclomaticComplexity: await countComplexity(init),
+            cyclomaticComplexity: countComplexity(init),
           });
-          for (const callee of await extractCallees(init)) {
+          for (const callee of extractCallees(init)) {
             edges.push({ sourceLocalId: localId, targetName: callee, kind: 'CALL', weight: 1 });
           }
         } else if (isExported) {

@@ -16,26 +16,12 @@ export function enrichGraph(
   const nodeById = new Map<string, GraphNode>();
   for (const n of nodes) nodeById.set(n.id, n);
 
-  // CALL resolution lookups:
-  // - nodesByName: name -> filePath -> node
-  // - firstNodeByName: first node seen for a given name (fallback)
-  const nodesByName = new Map<string, Map<string, GraphNode>>();
-  const firstNodeByName = new Map<string, GraphNode>();
-
+  // Name -> nodes (for CALL resolution)
+  const nodesByName = new Map<string, GraphNode[]>();
   for (const n of nodes) {
-    let fileMap = nodesByName.get(n.name);
-    if (!fileMap) {
-      fileMap = new Map<string, GraphNode>();
-      nodesByName.set(n.name, fileMap);
-    }
-    // If there are multiple nodes with the same name in the same file, we keep the first one we see.
-    if (!fileMap.has(n.filePath)) {
-      fileMap.set(n.filePath, n);
-    }
-
-    if (!firstNodeByName.has(n.name)) {
-      firstNodeByName.set(n.name, n);
-    }
+    const list = nodesByName.get(n.name) ?? [];
+    list.push(n);
+    nodesByName.set(n.name, list);
   }
 
   // Reset degrees
@@ -69,14 +55,14 @@ export function enrichGraph(
 
       // Fallback: name-based heuristic (prefer same-file match)
       if (!resolved) {
-        const candidates = nodesByName.get(calleeName);
-        if (candidates) {
-          const sameFile = sourceNode ? candidates.get(sourceNode.filePath) : undefined;
-          const best = sameFile ?? firstNodeByName.get(calleeName);
-          if (best) {
-            resolvedTarget = best.id;
-            resolved = true;
-          }
+        const candidates = nodesByName.get(calleeName) ?? [];
+        if (candidates.length > 0) {
+          const sameFile = sourceNode
+            ? candidates.find((c) => c.filePath === sourceNode.filePath)
+            : undefined;
+          const best = sameFile ?? candidates[0];
+          resolvedTarget = best.id;
+          resolved = true;
         }
       }
 
@@ -103,14 +89,14 @@ export function enrichGraph(
 
       // Fallback: name-based heuristic
       if (!resolved) {
-        const candidates = nodesByName.get(superName);
-        if (candidates) {
-          const sameFile = sourceNode ? candidates.get(sourceNode.filePath) : undefined;
-          const best = sameFile ?? firstNodeByName.get(superName);
-          if (best) {
-            resolvedTarget = best.id;
-            resolved = true;
-          }
+        const candidates = nodesByName.get(superName) ?? [];
+        if (candidates.length > 0) {
+          const sameFile = sourceNode
+            ? candidates.find((c) => c.filePath === sourceNode.filePath)
+            : undefined;
+          const best = sameFile ?? candidates[0];
+          resolvedTarget = best.id;
+          resolved = true;
         }
       }
 

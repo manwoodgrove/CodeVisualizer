@@ -63,7 +63,6 @@ export interface GraphSnapshot {
 }
 
 export interface RepoMeta {
-  ownerId: string;
   id: string;
   url: string;
   name: string;
