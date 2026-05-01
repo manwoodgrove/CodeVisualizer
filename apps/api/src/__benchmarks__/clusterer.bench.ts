@@ -1,5 +1,5 @@
 import { bench, describe } from 'vitest';
-import { clusterGraph } from '../services/graph/clusterer.js';
+import { clusterGraph } from '../services/graph/clusterer';
 import type { GraphNode, GraphEdge } from '@cv/types';
 
 const mockNodes: GraphNode[] = [];

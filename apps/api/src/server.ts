@@ -2,9 +2,6 @@ import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
 import { Server as SocketIOServer } from 'socket.io';
-import { parse as parseCookie } from 'cookie';
-import { unsign } from '@fastify/cookie';
-
 import { config } from './config.js';
 import { sqlite } from './db/client.js';
 import githubAuth from './auth/github.js';
@@ -76,22 +73,6 @@ async function build(): Promise<void> {
 
   const io = new SocketIOServer(fastify.server, {
     cors: { origin: config.corsOrigin, credentials: true },
-  });
-
-  io.use((socket, next) => {
-    const cookieHeader = socket.request.headers.cookie;
-    if (!cookieHeader) {
-      return next(new Error('unauthorized: no cookies'));
-    }
-    const cookies = parseCookie(cookieHeader);
-    if (!cookies.sid) {
-      return next(new Error('unauthorized: missing sid'));
-    }
-    const unsigned = unsign(cookies.sid, config.sessionSecret);
-    if (!unsigned.valid || !unsigned.value) {
-      return next(new Error('unauthorized: invalid sid'));
-    }
-    next();
   });
 
   io.on('connection', (socket) => {
