@@ -126,4 +126,21 @@ export const compute = (x: number, y: number): number => {
     // cyclomatic complexity of add = 1 (no branches)
     expect(addNode?.cyclomaticComplexity).toBe(1);
   });
+
+  it('returns minimal result on parse error', () => {
+    const source = 'const x = ;'; // Invalid syntax
+    const result = parseFile('src/error.ts', source);
+
+    expect(result.filePath).toBe('src/error.ts');
+    expect(result.nodes).toHaveLength(1);
+    expect(result.edges).toHaveLength(0);
+
+    const mod = result.nodes[0];
+    expect(mod.kind).toBe('MODULE');
+    expect(mod.name).toBe('error.ts');
+    expect(mod.lineStart).toBe(1);
+    expect(mod.lineEnd).toBe(1);
+    expect(mod.linesOfCode).toBe(1);
+    expect(mod.cyclomaticComplexity).toBe(1);
+  });
 });
