@@ -69,7 +69,6 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
         throw err;
       }
 
-      console.log(`[import ${jobId}] saving snapshot nodes=${snapshot.nodes.length} edges=${snapshot.edges.length}`);
       await saveSnapshot(repoId, snapshot);
       await updateRepoStatus(repoId, {
         status: 'ready',
