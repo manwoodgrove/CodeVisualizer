@@ -53,7 +53,6 @@ export function startImportWorker(
       await updateRepoStatus(repoId, { status: 'fetching' });
 
       let snapshot: GraphSnapshot;
-      let lastLoggedPct: Record<string, number> = {};
       try {
         snapshot = await runImport({
           token,
