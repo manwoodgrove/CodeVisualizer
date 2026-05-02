@@ -42,7 +42,6 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
         '../services/pipeline/runImport.js'
       ) as { runImport: (ctx: ImportContext) => Promise<GraphSnapshot> };
 
-      console.log(`[import ${jobId}] start repoId=${repoId} url=${url} branch=${branch ?? 'default'}`);
       await updateRepoStatus(repoId, { status: 'fetching' });
 
       let snapshot: GraphSnapshot;
