@@ -76,7 +76,9 @@ export async function fetchRepoFiles(opts: {
 
   await chunkedAll(treeItems, CONCURRENCY, async (item) => {
     try {
+      /* istanbul ignore if */
       if (!item.sha) return;
+
       const resp = await octokit.git.getBlob({
         owner,
         repo,
