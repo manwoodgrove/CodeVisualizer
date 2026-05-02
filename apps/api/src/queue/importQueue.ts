@@ -46,7 +46,6 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
       await updateRepoStatus(repoId, { status: 'fetching' });
 
       let snapshot: GraphSnapshot;
-      let lastLoggedPct: Record<string, number> = {};
       try {
         snapshot = await runImport({
           token,
@@ -54,11 +53,6 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
           branch,
           onProgress: (phase, pct) => {
             io.to(jobId).emit('job:progress', { jobId, phase, pct });
-            const prev = lastLoggedPct[phase] ?? -1;
-            if (pct === 0 || pct === 100 || pct - prev >= 20) {
-              console.log(`[import ${jobId}] ${phase} ${pct}%`);
-              lastLoggedPct[phase] = pct;
-            }
           },
         });
       } catch (err: unknown) {
