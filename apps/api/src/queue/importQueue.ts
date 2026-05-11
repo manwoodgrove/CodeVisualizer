@@ -42,6 +42,7 @@ export function startImportWorker(
         branch?: string;
         onProgress: (phase: 'fetch' | 'parse' | 'layout', pct: number) => void;
       };
+      const lastLoggedPct: Record<string, number> = {};
       const { runImport } = await import(
         '../services/pipeline/runImport.js'
       ) as { runImport: (ctx: ImportContext) => Promise<GraphSnapshot> };
