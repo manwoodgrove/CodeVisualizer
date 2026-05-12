@@ -34,9 +34,6 @@ const parsed = envSchema.parse(process.env);
 let sessionSecret = parsed.SESSION_SECRET;
 if (!sessionSecret) {
   sessionSecret = crypto.randomBytes(32).toString('hex'); // 64 hex chars
-  console.warn(
-    '[config] SESSION_SECRET is not set — using a random secret. Sessions will not survive restarts.'
-  );
 }
 
 export const config = {
