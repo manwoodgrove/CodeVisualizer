@@ -41,29 +41,18 @@ function sampleBezier(p0: pc.Vec3, p1: pc.Vec3, p2: pc.Vec3, t: number): pc.Vec3
   );
 }
 
+
 /**
- * Build a tube mesh with per-vertex V coordinate matching arc-length along
- * the curve. We also pack a per-vertex alpha-fade into UV0.x so the shader
- * can soften the endpoints (so edges visually merge into the nodes rather
- * than abruptly clipping into them).
+ * Computes an orthonormal frame (tangent, binormal, normal) for each point along the curve
+ * using parallel transport to minimize twisting.
  */
-function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: number): pc.Mesh {
-  const sides = TUBE_SIDES;
+function computeTubeFrames(points: pc.Vec3[]): { tangents: pc.Vec3[], binormals: pc.Vec3[], normals: pc.Vec3[] } {
   const segments = points.length;
-  const vertsPerRing = sides;
-  const totalVerts = segments * vertsPerRing;
-  const totalTris = (segments - 1) * sides * 2;
+  const tangents: pc.Vec3[] = [];
+  const binormals: pc.Vec3[] = [];
+  const normals: pc.Vec3[] = [];
 
-  const positions = new Float32Array(totalVerts * 3);
-  const normals   = new Float32Array(totalVerts * 3);
-  const uvs       = new Float32Array(totalVerts * 2);
-  const indices   = new Uint16Array(totalTris * 3);
-
-  // Stable up vector — using a simple non-axis-aligned reference avoids the
-  // tube "flipping" at vertical sections.
   const reference = new pc.Vec3(0.001, 1.0, 0.0).normalize();
-
-  // Track binormal across rings to prevent twist (parallel transport frame).
   let lastBinormal: pc.Vec3 | null = null;
 
   for (let si = 0; si < segments; si++) {
@@ -83,7 +72,6 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
         binormal = new pc.Vec3().cross(tangent, new pc.Vec3(1, 0, 0)).normalize();
       }
     } else {
-      // Project last binormal onto plane perpendicular to current tangent.
       const dotTB = lastBinormal.dot(tangent);
       binormal = new pc.Vec3(
         lastBinormal.x - tangent.x * dotTB,
@@ -95,44 +83,80 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
 
     const normal = new pc.Vec3().cross(binormal, tangent).normalize();
 
-    // Smooth taper at each end — so the tube emerges from / merges into the
-    // node rather than terminating abruptly.
+    tangents.push(tangent);
+    binormals.push(binormal);
+    normals.push(normal);
+  }
+
+  return { tangents, binormals, normals };
+}
+
+/**
+ * Generates the vertex positions, normals, and UVs for the tube mesh.
+ */
+function generateTubeGeometry(
+  points: pc.Vec3[],
+  radius: number,
+  sides: number,
+  binormals: pc.Vec3[],
+  normals: pc.Vec3[]
+) {
+  const segments = points.length;
+  const vertsPerRing = sides;
+  const totalVerts = segments * vertsPerRing;
+
+  const positions = new Float32Array(totalVerts * 3);
+  const meshNormals = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+
+  for (let si = 0; si < segments; si++) {
+    const binormal = binormals[si];
+    const normal = normals[si];
+
     const tNorm = si / (segments - 1);
     const taper = Math.min(1, Math.min(tNorm, 1 - tNorm) * 6.0);
     const r = radius * (0.35 + 0.65 * taper);
 
-    for (let vi = 0; vi < sides; vi++) {
-      const angle = (vi / sides) * Math.PI * 2;
-      const cos   = Math.cos(angle);
-      const sin   = Math.sin(angle);
+    for (let currentSide = 0; currentSide < sides; currentSide++) {
+      const angle = (currentSide / sides) * Math.PI * 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
 
       const nx = normal.x * cos + binormal.x * sin;
       const ny = normal.y * cos + binormal.y * sin;
       const nz = normal.z * cos + binormal.z * sin;
 
-      const vIdx = (si * vertsPerRing + vi) * 3;
+      const vIdx = (si * vertsPerRing + currentSide) * 3;
       positions[vIdx + 0] = points[si].x + nx * r;
       positions[vIdx + 1] = points[si].y + ny * r;
       positions[vIdx + 2] = points[si].z + nz * r;
-      normals[vIdx + 0]   = nx;
-      normals[vIdx + 1]   = ny;
-      normals[vIdx + 2]   = nz;
+      meshNormals[vIdx + 0] = nx;
+      meshNormals[vIdx + 1] = ny;
+      meshNormals[vIdx + 2] = nz;
 
-      // U: alpha-fade weight (0 at endpoints, 1 in middle).
-      // V: arc-length parameter (0→1, source→target).
-      const uvIdx = (si * vertsPerRing + vi) * 2;
+      const uvIdx = (si * vertsPerRing + currentSide) * 2;
       uvs[uvIdx + 0] = taper;
       uvs[uvIdx + 1] = tNorm;
     }
   }
 
+  return { positions, meshNormals, uvs };
+}
+
+/**
+ * Generates the triangle indices for the tube mesh.
+ */
+function generateTubeIndices(segments: number, sides: number): Uint16Array {
+  const totalTris = (segments - 1) * sides * 2;
+  const indices = new Uint16Array(totalTris * 3);
+
   let triIdx = 0;
   for (let si = 0; si < segments - 1; si++) {
-    for (let vi = 0; vi < sides; vi++) {
-      const a = si * vertsPerRing + vi;
-      const b = si * vertsPerRing + (vi + 1) % sides;
-      const c = (si + 1) * vertsPerRing + vi;
-      const d = (si + 1) * vertsPerRing + (vi + 1) % sides;
+    for (let currentSide = 0; currentSide < sides; currentSide++) {
+      const a = si * sides + currentSide;
+      const b = si * sides + (currentSide + 1) % sides;
+      const c = (si + 1) * sides + currentSide;
+      const d = (si + 1) * sides + (currentSide + 1) % sides;
 
       indices[triIdx++] = a;
       indices[triIdx++] = b;
@@ -144,9 +168,26 @@ function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: num
     }
   }
 
+  return indices;
+}
+
+/**
+ * Build a tube mesh with per-vertex V coordinate matching arc-length along
+ * the curve. We also pack a per-vertex alpha-fade into UV0.x so the shader
+ * can soften the endpoints (so edges visually merge into the nodes rather
+ * than abruptly clipping into them).
+ */
+function buildTubeMesh(device: pc.GraphicsDevice, points: pc.Vec3[], radius: number): pc.Mesh {
+  const sides = TUBE_SIDES;
+  const segments = points.length;
+
+  const { binormals, normals } = computeTubeFrames(points);
+  const { positions, meshNormals, uvs } = generateTubeGeometry(points, radius, sides, binormals, normals);
+  const indices = generateTubeIndices(segments, sides);
+
   const mesh = new pc.Mesh(device);
   mesh.setPositions(positions);
-  mesh.setNormals(normals);
+  mesh.setNormals(meshNormals);
   mesh.setUvs(0, uvs);
   mesh.setIndices(indices);
   mesh.update();
