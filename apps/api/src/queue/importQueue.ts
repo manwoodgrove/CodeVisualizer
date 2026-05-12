@@ -63,8 +63,7 @@ export function startImportWorker(
           branch,
           onProgress: (phase, pct) => {
             io.to(jobId).emit('job:progress', { jobId, phase, pct });
-            const prev = lastLoggedPct[phase] ?? -1;
-            if (pct === 0 || pct === 100 || pct - prev >= 20) {
+            if (shouldLogProgress(pct, lastLoggedPct[phase] ?? -1)) {
               logger.info({ jobId, phase, pct }, 'Import progress');
               lastLoggedPct[phase] = pct;
             }
@@ -105,6 +104,10 @@ export function startImportWorker(
   });
 
   return worker;
+}
+
+function shouldLogProgress(pct: number, prevPct: number): boolean {
+  return pct === 0 || pct === 100 || pct - prevPct >= 20;
 }
 
 /** Convenience: enqueue an import job and return the generated jobId */
