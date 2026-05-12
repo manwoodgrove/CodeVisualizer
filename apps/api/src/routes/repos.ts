@@ -11,6 +11,49 @@ import {
 import { enqueueImport } from '../queue/importQueue.js';
 
 // ---------------------------------------------------------------------------
+// Cache
+// ---------------------------------------------------------------------------
+
+interface CachedSnapshot {
+  snapshot: GraphSnapshot;
+  nodeIndex: Map<string, import('@cv/types').GraphNode>;
+  timestamp: number;
+}
+
+const snapshotCache = new Map<string, CachedSnapshot>();
+const CACHE_TTL_MS = 60 * 1000; // 1 minute
+const MAX_CACHE_SIZE = 10;
+
+async function getCachedSnapshot(repoId: string): Promise<{ snapshot: GraphSnapshot; nodeIndex: Map<string, import('@cv/types').GraphNode> } | null> {
+  const now = Date.now();
+  const cached = snapshotCache.get(repoId);
+  if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return { snapshot: cached.snapshot, nodeIndex: cached.nodeIndex };
+  }
+
+  const snapshot = await getSnapshot(repoId);
+  if (!snapshot) return null;
+
+  const nodeIndex = new Map<string, import('@cv/types').GraphNode>();
+  for (const node of snapshot.nodes) {
+    nodeIndex.set(node.id, node);
+    if (node.filePath) nodeIndex.set(node.filePath, node);
+    if (node.name) nodeIndex.set(node.name, node);
+  }
+
+  if (snapshotCache.size >= MAX_CACHE_SIZE && !snapshotCache.has(repoId)) {
+    // Evict oldest (Map iterates in insertion order)
+    const oldestKey = snapshotCache.keys().next().value;
+    if (oldestKey) snapshotCache.delete(oldestKey);
+  }
+
+  // Delete first to refresh insertion order (LRU-ish)
+  snapshotCache.delete(repoId);
+  snapshotCache.set(repoId, { snapshot, nodeIndex, timestamp: now });
+  return { snapshot, nodeIndex };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -156,12 +199,13 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params;
       const { module: moduleId, depth: depthStr } = request.query;
 
-      const snapshot = await getSnapshot(id);
-      if (!snapshot) {
+      const cached = await getCachedSnapshot(id);
+      if (!cached) {
         return reply.status(404).send({
           error: { code: 'NOT_FOUND', message: 'Graph snapshot not found' },
         });
       }
+      const { snapshot, nodeIndex } = cached;
 
       if (moduleId) {
         const depth = depthStr !== undefined ? parseInt(depthStr, 10) : 3;
@@ -170,9 +214,7 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
             error: { code: 'VALIDATION_ERROR', message: 'depth must be a positive integer' },
           });
         }
-        const node = snapshot.nodes.find(
-          (n) => n.id === moduleId || n.filePath === moduleId || n.name === moduleId
-        );
+        const node = nodeIndex.get(moduleId);
         if (!node) {
           return reply.status(404).send({
             error: { code: 'NOT_FOUND', message: `Node '${moduleId}' not found in snapshot` },
@@ -198,12 +240,13 @@ const reposPlugin: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const snapshot = await getSnapshot(request.params.id);
-      if (!snapshot) {
+      const cached = await getCachedSnapshot(request.params.id);
+      if (!cached) {
         return reply.status(404).send({
           error: { code: 'NOT_FOUND', message: 'Graph snapshot not found' },
         });
       }
+      const { snapshot } = cached;
 
       const { simulateSignal } = await import(
         '../services/simulator/tracer.js'

@@ -54,6 +54,7 @@ export function startImportWorker(
 
       let snapshot: GraphSnapshot;
       try {
+        const lastLoggedPct: Record<string, number> = {};
         snapshot = await runImport({
           token,
           url,
