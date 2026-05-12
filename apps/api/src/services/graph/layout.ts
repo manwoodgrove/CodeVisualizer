@@ -67,24 +67,27 @@ export function layoutGraph(
   });
 
   // Compute cluster centroids
-  const clusterPositions = new Map<string, { xs: number[]; ys: number[]; zs: number[] }>();
+  const clusterSums = new Map<string, { x: number; y: number; z: number; count: number }>();
   for (const n of layoutNodes) {
     if (!n.clusterId) continue;
-    const entry = clusterPositions.get(n.clusterId) ?? { xs: [], ys: [], zs: [] };
-    entry.xs.push(n.position3d.x);
-    entry.ys.push(n.position3d.y);
-    entry.zs.push(n.position3d.z);
-    clusterPositions.set(n.clusterId, entry);
+    let entry = clusterSums.get(n.clusterId);
+    if (!entry) {
+      entry = { x: 0, y: 0, z: 0, count: 0 };
+      clusterSums.set(n.clusterId, entry);
+    }
+    entry.x += n.position3d.x;
+    entry.y += n.position3d.y;
+    entry.z += n.position3d.z;
+    entry.count++;
   }
 
   for (const cluster of clusters) {
-    const pos = clusterPositions.get(cluster.id);
-    if (!pos || pos.xs.length === 0) continue;
-    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const sum = clusterSums.get(cluster.id);
+    if (!sum || sum.count === 0) continue;
     cluster.centroid3d = {
-      x: avg(pos.xs),
-      y: avg(pos.ys),
-      z: avg(pos.zs),
+      x: sum.x / sum.count,
+      y: sum.y / sum.count,
+      z: sum.z / sum.count,
     };
   }
 
