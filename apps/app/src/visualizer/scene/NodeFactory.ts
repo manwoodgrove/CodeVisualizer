@@ -124,52 +124,63 @@ export class NodeFactory {
     let phaseSeed = 0;
 
     for (const node of snapshot.nodes) {
-      const colorHex = NODE_COLORS[node.kind];
-      const baseScale = computeScale(node);
-      const { mesh, entityScale } = buildMesh(this.app, node, baseScale);
-      const mat = makeMaterial(this.app, colorHex);
-
-      const entity = new pc.Entity(`node:${node.id}`);
-      entity.addComponent('render', {
-        meshInstances: [new pc.MeshInstance(mesh, mat)],
-        castShadows: false,
-        receiveShadows: true,
-      });
-
-      const basePos = new pc.Vec3(node.position3d.x, node.position3d.y, node.position3d.z);
-      entity.setLocalPosition(basePos.x, basePos.y, basePos.z);
-      entity.setLocalScale(entityScale.x, entityScale.y, entityScale.z);
-
-      parent.addChild(entity);
-
-      this.addLabel(entity, node.name, baseScale, fontAsset);
-
-      // Deterministic per-node phases derived from a counter so the same
-      // graph always animates the same way (helps reproducibility / tests).
-      const bobPhase = (phaseSeed * 1.317) % (Math.PI * 2);
-      const spinPhase = (phaseSeed * 2.713) % 360;
-      phaseSeed++;
-
-      const data: NodeData = {
-        entity,
-        baseScale: entityScale.clone(),
-        basePosition: basePos,
-        material: mat,
-        colorHex,
-        bobPhase,
-        spinPhase,
-        motion: KIND_MOTION[node.kind],
-        pulseActive: false,
-        pulseElapsed: 0,
-        pulseDur: 600,
-        highlighted: false,
-      };
-      this.nodeMap.set(node.id, data);
-      this.entityToId.set(entity, node.id);
+      const entity = this.createSingleNode(node, parent, phaseSeed, fontAsset);
       entityMap.set(node.id, entity);
+      phaseSeed++;
     }
 
     return entityMap;
+  }
+
+  private createSingleNode(
+    node: GraphNode,
+    parent: pc.Entity,
+    phaseSeed: number,
+    fontAsset?: pc.Asset,
+  ): pc.Entity {
+    const colorHex = NODE_COLORS[node.kind];
+    const baseScale = computeScale(node);
+    const { mesh, entityScale } = buildMesh(this.app, node, baseScale);
+    const mat = makeMaterial(this.app, colorHex);
+
+    const entity = new pc.Entity(`node:${node.id}`);
+    entity.addComponent('render', {
+      meshInstances: [new pc.MeshInstance(mesh, mat)],
+      castShadows: false,
+      receiveShadows: true,
+    });
+
+    const basePos = new pc.Vec3(node.position3d.x, node.position3d.y, node.position3d.z);
+    entity.setLocalPosition(basePos.x, basePos.y, basePos.z);
+    entity.setLocalScale(entityScale.x, entityScale.y, entityScale.z);
+
+    parent.addChild(entity);
+
+    this.addLabel(entity, node.name, baseScale, fontAsset);
+
+    // Deterministic per-node phases derived from a counter so the same
+    // graph always animates the same way (helps reproducibility / tests).
+    const bobPhase = (phaseSeed * 1.317) % (Math.PI * 2);
+    const spinPhase = (phaseSeed * 2.713) % 360;
+
+    const data: NodeData = {
+      entity,
+      baseScale: entityScale.clone(),
+      basePosition: basePos,
+      material: mat,
+      colorHex,
+      bobPhase,
+      spinPhase,
+      motion: KIND_MOTION[node.kind],
+      pulseActive: false,
+      pulseElapsed: 0,
+      pulseDur: 600,
+      highlighted: false,
+    };
+    this.nodeMap.set(node.id, data);
+    this.entityToId.set(entity, node.id);
+
+    return entity;
   }
 
   private addLabel(
