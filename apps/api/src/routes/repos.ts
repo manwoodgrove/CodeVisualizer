@@ -40,19 +40,51 @@ function bfsSubSnapshot(
   let frontier = new Set<string>([startNodeId]);
   nodeIdSet.add(startNodeId);
 
-  for (let d = 0; d < depth; d++) {
-    const next = new Set<string>();
-    for (const edge of snapshot.edges) {
-      if (frontier.has(edge.source) && !nodeIdSet.has(edge.target)) {
-        next.add(edge.target);
-      }
-      if (frontier.has(edge.target) && !nodeIdSet.has(edge.source)) {
-        next.add(edge.source);
-      }
+  const useAdjList = depth > 2 && snapshot.edges.length > 0;
+
+  if (useAdjList) {
+    const adj: Record<string, string[]> = Object.create(null);
+    for (let i = 0; i < snapshot.edges.length; i++) {
+      const edge = snapshot.edges[i];
+      let s = adj[edge.source];
+      if (s === undefined) adj[edge.source] = s = [];
+      s.push(edge.target);
+      let t = adj[edge.target];
+      if (t === undefined) adj[edge.target] = t = [];
+      t.push(edge.source);
     }
-    if (next.size === 0) break;
-    for (const id of next) nodeIdSet.add(id);
-    frontier = next;
+
+    for (let d = 0; d < depth; d++) {
+      const next = new Set<string>();
+      for (const nodeId of frontier) {
+        const neighbors = adj[nodeId];
+        if (neighbors !== undefined) {
+          for (let i = 0; i < neighbors.length; i++) {
+            const neighbor = neighbors[i];
+            if (!nodeIdSet.has(neighbor)) next.add(neighbor);
+          }
+        }
+      }
+      if (next.size === 0) break;
+      for (const id of next) nodeIdSet.add(id);
+      frontier = next;
+    }
+  } else {
+    for (let d = 0; d < depth; d++) {
+      const next = new Set<string>();
+      for (let i = 0; i < snapshot.edges.length; i++) {
+        const edge = snapshot.edges[i];
+        if (frontier.has(edge.source) && !nodeIdSet.has(edge.target)) {
+          next.add(edge.target);
+        }
+        if (frontier.has(edge.target) && !nodeIdSet.has(edge.source)) {
+          next.add(edge.source);
+        }
+      }
+      if (next.size === 0) break;
+      for (const id of next) nodeIdSet.add(id);
+      frontier = next;
+    }
   }
 
   const nodes = snapshot.nodes.filter((n) => nodeIdSet.has(n.id));
