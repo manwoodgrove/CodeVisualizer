@@ -14,7 +14,7 @@ export interface ImportContext {
   onProgress: (phase: 'fetch' | 'parse' | 'layout', pct: number, message?: string) => void;
 }
 
-function parseGithubUrl(url: string): { owner: string; repo: string } {
+export function parseGithubUrl(url: string): { owner: string; repo: string } {
   // Handles https://github.com/owner/repo or github.com/owner/repo
   const cleaned = url.replace(/^https?:\/\//, '').replace(/\.git$/, '');
   const parts = cleaned.split('/').filter(Boolean);
@@ -22,7 +22,26 @@ function parseGithubUrl(url: string): { owner: string; repo: string } {
   const start = githubIndex >= 0 ? githubIndex + 1 : 0;
   const owner = parts[start];
   const repo = parts[start + 1];
+
   if (!owner || !repo) throw new Error(`Invalid GitHub URL: ${url}`);
+
+  // GitHub username/org validation:
+  // - Alphanumeric with single hyphens
+  // - Cannot begin or end with a hyphen
+  // - Max 39 characters
+  // - EMUs can have underscores
+  const ownerRegex = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])|_){0,38}$/i;
+
+  // GitHub repo validation:
+  // - Alphanumeric, hyphens, underscores, dots
+  // - Max 100 characters
+  // - Cannot be '.' or '..'
+  const repoRegex = /^(?!\.\.?$)[a-z\d._-]{1,100}$/i;
+
+  if (!ownerRegex.test(owner) || !repoRegex.test(repo)) {
+    throw new Error(`Invalid GitHub owner or repository name: ${owner}/${repo}`);
+  }
+
   return { owner, repo };
 }
 
