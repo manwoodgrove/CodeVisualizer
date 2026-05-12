@@ -234,19 +234,26 @@ const EDGE_EMISSIVE_PS = /* glsl */ `
   uniform float uEdgePulsePhase;
 
   void getEmission() {
-      vec2 uv = vUv0 * material_emissiveMapTiling + material_emissiveMapOffset;
+
+      #ifdef VARYING_VUV0
+        vec2 uv = vUv0 * material_emissiveMapTiling + material_emissiveMapOffset;
+        float fade = vUv0.x;
+      #else
+        vec2 uv = material_emissiveMapOffset;
+        float fade = 0.5;
+      #endif
       vec4 flow = texture2D(texture_emissiveMap, uv);
 
       // Per-vertex endpoint fade (UV.x packs taper 0..1; squaring softens it).
-      float endpointFade = smoothstep(0.0, 0.5, vUv0.x);
+      float endpointFade = smoothstep(0.0, 0.5, fade);
 
       // Subtle global breathing — slightly different phase per edge so the
       // network doesn't strobe in unison.
       float breathe = 0.85 + 0.30 * sin(uEdgeTime * 1.7 + uEdgePulsePhase);
 
       // Fresnel rim: brightest along silhouette
-      vec3 N = normalize(vNormalW);
-      vec3 V = normalize(view_position - vPositionW);
+      vec3 N = dVertexNormalW;
+      vec3 V = dViewDirW;
       float ndotv = clamp(abs(dot(N, V)), 0.0, 1.0);
       float fresnel = pow(1.0 - ndotv, 1.4);
 
