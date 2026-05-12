@@ -35,11 +35,11 @@ export class CameraRig {
   private lastY = 0;
 
   private canvas: HTMLCanvasElement;
-  private onPointerDown: (e: PointerEvent) => void;
-  private onPointerMove: (e: PointerEvent) => void;
-  private onPointerUp: (e: PointerEvent) => void;
-  private onWheel: (e: WheelEvent) => void;
-  private onContextMenu: (e: Event) => void;
+  private onPointerDown!: (e: PointerEvent) => void;
+  private onPointerMove!: (e: PointerEvent) => void;
+  private onPointerUp!: (e: PointerEvent) => void;
+  private onWheel!: (e: WheelEvent) => void;
+  private onContextMenu!: (e: Event) => void;
   private destroyed = false;
 
   constructor(app: pc.Application, parent: pc.Entity) {
@@ -58,18 +58,7 @@ export class CameraRig {
 
     this.applyTransform();
 
-    // Bind input handlers
-    this.onPointerDown = this.handlePointerDown.bind(this);
-    this.onPointerMove = this.handlePointerMove.bind(this);
-    this.onPointerUp = this.handlePointerUp.bind(this);
-    this.onWheel = this.handleWheel.bind(this);
-    this.onContextMenu = (e) => e.preventDefault();
-
-    this.canvas.addEventListener('pointerdown', this.onPointerDown);
-    this.canvas.addEventListener('pointermove', this.onPointerMove);
-    this.canvas.addEventListener('pointerup', this.onPointerUp);
-    this.canvas.addEventListener('wheel', this.onWheel, { passive: true });
-    this.canvas.addEventListener('contextmenu', this.onContextMenu);
+    this.bindEvents();
   }
 
   get cameraComponent(): pc.CameraComponent {
@@ -182,14 +171,32 @@ export class CameraRig {
     this.applyTransform();
   }
 
-  destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
+  private bindEvents(): void {
+    this.onPointerDown = this.handlePointerDown.bind(this);
+    this.onPointerMove = this.handlePointerMove.bind(this);
+    this.onPointerUp = this.handlePointerUp.bind(this);
+    this.onWheel = this.handleWheel.bind(this);
+    this.onContextMenu = (e) => e.preventDefault();
+
+    this.canvas.addEventListener('pointerdown', this.onPointerDown);
+    this.canvas.addEventListener('pointermove', this.onPointerMove);
+    this.canvas.addEventListener('pointerup', this.onPointerUp);
+    this.canvas.addEventListener('wheel', this.onWheel, { passive: true });
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
+  }
+
+  private unbindEvents(): void {
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('wheel', this.onWheel);
     this.canvas.removeEventListener('contextmenu', this.onContextMenu);
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.unbindEvents();
     this.entity.destroy();
   }
 }
