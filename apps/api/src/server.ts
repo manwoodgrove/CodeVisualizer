@@ -42,7 +42,12 @@ const DDL = `
 `;
 
 async function runMigrations(): Promise<void> {
-  await sqlite.executeMultiple(DDL);
+  const statements = DDL.split(';')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  for (const stmt of statements) {
+    await sqlite.execute({ sql: stmt, args: [] });
+  }
 }
 
 async function build(): Promise<void> {

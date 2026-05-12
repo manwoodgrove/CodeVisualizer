@@ -25,6 +25,16 @@ vi.mock('nanoid', () => ({
   nanoid: () => 'test-job-id'
 }));
 
+
+const mockLogger = {
+  info: vi.fn(),
+  error: vi.fn(),
+  warn: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+  fatal: vi.fn(),
+};
+
 vi.mock('../db/repos.js', () => ({
   updateRepoStatus: vi.fn(),
   saveSnapshot: vi.fn()
@@ -42,7 +52,7 @@ describe('importQueue', () => {
   describe('startImportWorker', () => {
     it('should initialize worker with correct name', () => {
       const ioMock = { to: vi.fn() } as any;
-      const worker = startImportWorker(ioMock);
+      const worker = startImportWorker(ioMock, mockLogger as any);
       expect(Worker).toHaveBeenCalledWith('import', expect.any(Function), expect.any(Object));
 
       // verify error handler attachment
@@ -56,10 +66,10 @@ describe('importQueue', () => {
       } as any;
 
       const { runImport } = await import('../services/pipeline/runImport.js');
-      const mockSnapshot = { nodes: [{id: '1'}], edges: [] };
+      const mockSnapshot = { repoId: 'repo-123', repoName: 'test', nodes: [{ id: '1', name: 'n', file: 'f', kind: 'function', group: 'group', outDegree: 0, inDegree: 0, degree: 0 }], edges: [], clusters: [], stats: { totalNodes: 1, totalEdges: 0 } } as any;
       vi.mocked(runImport).mockResolvedValueOnce(mockSnapshot);
 
-      const worker: any = startImportWorker(ioMock);
+      const worker: any = startImportWorker(ioMock, mockLogger as any);
 
       const mockJob = {
         data: {
@@ -100,10 +110,10 @@ describe('importQueue', () => {
       const { runImport } = await import('../services/pipeline/runImport.js');
       vi.mocked(runImport).mockImplementationOnce(async ({ onProgress }) => {
         onProgress('fetch', 50);
-        return { nodes: [], edges: [] };
+        return { repoId: 'repo-123', repoName: 'test', nodes: [], edges: [], clusters: [], stats: { totalNodes: 0, totalEdges: 0 } } as any;
       });
 
-      const worker: any = startImportWorker(ioMock);
+      const worker: any = startImportWorker(ioMock, mockLogger as any);
 
       const mockJob = {
         data: { jobId: 'job-123', repoId: 'repo-456', url: 'http://test', token: 'test' }
@@ -125,7 +135,7 @@ describe('importQueue', () => {
       const testError = new Error('Import failed');
       vi.mocked(runImport).mockRejectedValueOnce(testError);
 
-      const worker: any = startImportWorker(ioMock);
+      const worker: any = startImportWorker(ioMock, mockLogger as any);
 
       const mockJob = {
         data: { jobId: 'job-123', repoId: 'repo-456', url: 'http://test', token: 'test' }

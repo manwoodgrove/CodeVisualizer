@@ -29,6 +29,7 @@ export function startImportWorker(
     maxRetriesPerRequest: null,
   });
 
+  const lastLoggedPct: Record<string, number> = {};
   const worker = new Worker<ImportJobData>(
     'import',
     async (job) => {
