@@ -170,63 +170,54 @@ class FileParser {
   private collectExportedNames(ast: TSESTree.Program): void {
     for (const stmt of ast.body) {
       if (stmt.type === 'ExportNamedDeclaration') {
-        const exp = stmt as TSESTree.ExportNamedDeclaration;
-        if (exp.declaration) {
-          const decl = exp.declaration;
-          if (decl.type === 'FunctionDeclaration' && decl.id) {
-            this.exportedNames.add(decl.id.name);
-          } else if (decl.type === 'ClassDeclaration' && decl.id) {
-            this.exportedNames.add(decl.id.name);
-          } else if (decl.type === 'VariableDeclaration') {
-            for (const vd of decl.declarations) {
-              if (vd.id.type === 'Identifier') this.exportedNames.add(vd.id.name);
-            }
-          }
-        }
-        for (const spec of exp.specifiers) {
-          this.exportedNames.add(spec.local.name);
-        }
+        this.handleExportNamedDeclaration(stmt as TSESTree.ExportNamedDeclaration);
       } else if (stmt.type === 'ExportDefaultDeclaration') {
-        const def = stmt as TSESTree.ExportDefaultDeclaration;
-        if (def.declaration.type === 'Identifier') {
-          this.exportedNames.add((def.declaration as TSESTree.Identifier).name);
-        } else if (
-          def.declaration.type === 'FunctionDeclaration' &&
-          (def.declaration as TSESTree.FunctionDeclaration).id
-        ) {
-          this.exportedNames.add((def.declaration as TSESTree.FunctionDeclaration).id!.name);
-        } else if (
-          def.declaration.type === 'ClassDeclaration' &&
-          (def.declaration as TSESTree.ClassDeclaration).id
-        ) {
-          this.exportedNames.add((def.declaration as TSESTree.ClassDeclaration).id!.name);
+        this.handleExportDefaultDeclaration(stmt as TSESTree.ExportDefaultDeclaration);
+      }
+    }
+  }
+
+  private handleExportNamedDeclaration(exp: TSESTree.ExportNamedDeclaration): void {
+    for (const spec of exp.specifiers) {
+      this.exportedNames.add(spec.local.name);
+    }
+
+    if (!exp.declaration) return;
+    const decl = exp.declaration;
+
+    if (decl.type === 'FunctionDeclaration' && decl.id) {
+      this.exportedNames.add(decl.id.name);
+    } else if (decl.type === 'ClassDeclaration' && decl.id) {
+      this.exportedNames.add(decl.id.name);
+    } else if (decl.type === 'VariableDeclaration') {
+      for (const vd of decl.declarations) {
+        if (vd.id.type === 'Identifier') {
+          this.exportedNames.add(vd.id.name);
         }
       }
+    }
+  }
+
+  private handleExportDefaultDeclaration(def: TSESTree.ExportDefaultDeclaration): void {
+    const decl = def.declaration;
+    if (decl.type === 'Identifier') {
+      this.exportedNames.add(decl.name);
+    } else if (decl.type === 'FunctionDeclaration' && decl.id) {
+      this.exportedNames.add(decl.id.name);
+    } else if (decl.type === 'ClassDeclaration' && decl.id) {
+      this.exportedNames.add(decl.id.name);
     }
   }
 
   private processStatements(ast: TSESTree.Program): void {
     for (const stmt of ast.body) {
       if (stmt.type === 'ImportDeclaration') {
-        const imp = stmt as TSESTree.ImportDeclaration;
-        const specifier = imp.source.value as string;
-        for (const s of imp.specifiers) {
-          this.importMap[s.local.name] = specifier;
-        }
-        this.edges.push({
-          sourceLocalId: moduleLocalId(this.filePath),
-          targetName: specifier,
-          targetFilePath: specifier,
-          kind: 'IMPORT',
-          weight: 1,
-        });
-      } else if (stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') {
-        let decl: TSESTree.Node | null = null;
-        if (stmt.type === 'ExportNamedDeclaration') {
-          decl = (stmt as TSESTree.ExportNamedDeclaration).declaration ?? null;
-        } else {
-          decl = (stmt as TSESTree.ExportDefaultDeclaration).declaration;
-        }
+        this.handleImportDeclaration(stmt as TSESTree.ImportDeclaration);
+      } else if (stmt.type === 'ExportNamedDeclaration') {
+        const decl = (stmt as TSESTree.ExportNamedDeclaration).declaration;
+        if (decl) this.processTopLevelDecl(decl, true);
+      } else if (stmt.type === 'ExportDefaultDeclaration') {
+        const decl = (stmt as TSESTree.ExportDefaultDeclaration).declaration;
         if (decl) this.processTopLevelDecl(decl, true);
       } else {
         this.processTopLevelDecl(stmt, false);
@@ -234,13 +225,31 @@ class FileParser {
     }
   }
 
+  private handleImportDeclaration(imp: TSESTree.ImportDeclaration): void {
+    const specifier = imp.source.value as string;
+    for (const s of imp.specifiers) {
+      this.importMap[s.local.name] = specifier;
+    }
+    this.edges.push({
+      sourceLocalId: moduleLocalId(this.filePath),
+      targetName: specifier,
+      targetFilePath: specifier,
+      kind: 'IMPORT',
+      weight: 1,
+    });
+  }
+
   private processTopLevelDecl(decl: TSESTree.Node, forceExported: boolean): void {
-    if (decl.type === 'FunctionDeclaration') {
-      this.processFunctionDeclaration(decl as TSESTree.FunctionDeclaration, forceExported);
-    } else if (decl.type === 'ClassDeclaration') {
-      this.processClassDeclaration(decl as TSESTree.ClassDeclaration, forceExported);
-    } else if (decl.type === 'VariableDeclaration') {
-      this.processVariableDeclaration(decl as TSESTree.VariableDeclaration, forceExported);
+    switch (decl.type) {
+      case 'FunctionDeclaration':
+        this.processFunctionDeclaration(decl as TSESTree.FunctionDeclaration, forceExported);
+        break;
+      case 'ClassDeclaration':
+        this.processClassDeclaration(decl as TSESTree.ClassDeclaration, forceExported);
+        break;
+      case 'VariableDeclaration':
+        this.processVariableDeclaration(decl as TSESTree.VariableDeclaration, forceExported);
+        break;
     }
   }
 
