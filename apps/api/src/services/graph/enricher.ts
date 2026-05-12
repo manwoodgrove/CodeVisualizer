@@ -16,12 +16,19 @@ export function enrichGraph(
   const nodeById = new Map<string, GraphNode>();
   for (const n of nodes) nodeById.set(n.id, n);
 
-  // Name -> nodes (for CALL resolution)
-  const nodesByName = new Map<string, GraphNode[]>();
+  // Name -> filePath -> Node (for O(1) same-file CALL resolution)
+  const nodesByNameAndFile = new Map<string, Map<string, GraphNode>>();
+  // Name -> First seen Node (fallback when same-file match not found)
+  const nodesByNameFallback = new Map<string, GraphNode>();
+
   for (const n of nodes) {
-    const list = nodesByName.get(n.name) ?? [];
-    list.push(n);
-    nodesByName.set(n.name, list);
+    let fileMap = nodesByNameAndFile.get(n.name);
+    if (!fileMap) {
+      fileMap = new Map();
+      nodesByNameAndFile.set(n.name, fileMap);
+      nodesByNameFallback.set(n.name, n);
+    }
+    fileMap.set(n.filePath, n);
   }
 
   // Reset degrees
@@ -55,12 +62,10 @@ export function enrichGraph(
 
       // Fallback: name-based heuristic (prefer same-file match)
       if (!resolved) {
-        const candidates = nodesByName.get(calleeName) ?? [];
-        if (candidates.length > 0) {
-          const sameFile = sourceNode
-            ? candidates.find((c) => c.filePath === sourceNode.filePath)
-            : undefined;
-          const best = sameFile ?? candidates[0];
+        const fileMap = nodesByNameAndFile.get(calleeName);
+        if (fileMap) {
+          const sameFile = sourceNode ? fileMap.get(sourceNode.filePath) : undefined;
+          const best = sameFile ?? nodesByNameFallback.get(calleeName)!;
           resolvedTarget = best.id;
           resolved = true;
         }
@@ -87,14 +92,12 @@ export function enrichGraph(
         }
       }
 
-      // Fallback: name-based heuristic
+      // Fallback: name-based heuristic (prefer same-file match)
       if (!resolved) {
-        const candidates = nodesByName.get(superName) ?? [];
-        if (candidates.length > 0) {
-          const sameFile = sourceNode
-            ? candidates.find((c) => c.filePath === sourceNode.filePath)
-            : undefined;
-          const best = sameFile ?? candidates[0];
+        const fileMap = nodesByNameAndFile.get(superName);
+        if (fileMap) {
+          const sameFile = sourceNode ? fileMap.get(sourceNode.filePath) : undefined;
+          const best = sameFile ?? nodesByNameFallback.get(superName)!;
           resolvedTarget = best.id;
           resolved = true;
         }
