@@ -1,6 +1,8 @@
 import { parse } from '@typescript-eslint/typescript-estree';
 import type { TSESTree } from '@typescript-eslint/typescript-estree';
 import type { NodeKind, EdgeKind } from '@cv/types';
+import { walkAST } from './ast-walker.js';
+
 
 export interface RawNode {
   localId: string;
@@ -39,8 +41,7 @@ function moduleLocalId(filePath: string): string {
 
 function countComplexity(node: TSESTree.Node): number {
   let count = 0;
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  walkAST(node, (n) => {
     switch (n.type) {
       case 'IfStatement':
       case 'ForStatement':
@@ -66,26 +67,13 @@ function countComplexity(node: TSESTree.Node): number {
       default:
         break;
     }
-    for (const key of Object.keys(n)) {
-      if (key === 'parent') continue;
-      const child = (n as unknown as Record<string, unknown>)[key];
-      if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
-        }
-      } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
-      }
-    }
-  }
-  walk(node);
+  });
   return count + 1;
 }
 
 function extractCallees(node: TSESTree.Node): string[] {
   const callees: string[] = [];
-  function walk(n: TSESTree.Node | null | undefined): void {
-    if (!n || typeof n !== 'object') return;
+  walkAST(node, (n) => {
     if (n.type === 'CallExpression') {
       const callee = (n as TSESTree.CallExpression).callee;
       if (callee.type === 'Identifier') {
@@ -97,19 +85,7 @@ function extractCallees(node: TSESTree.Node): string[] {
         }
       }
     }
-    for (const key of Object.keys(n)) {
-      if (key === 'parent') continue;
-      const child = (n as unknown as Record<string, unknown>)[key];
-      if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c) walk(c as TSESTree.Node);
-        }
-      } else if (child && typeof child === 'object' && 'type' in child) {
-        walk(child as TSESTree.Node);
-      }
-    }
-  }
-  walk(node);
+  });
   return callees;
 }
 
