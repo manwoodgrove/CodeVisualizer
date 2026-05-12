@@ -33,6 +33,7 @@ export function startImportWorker(
     'import',
     async (job) => {
       const { jobId, repoId, url, branch, token } = job.data;
+      const lastLoggedPct: Record<string, number> = {};
 
       // Dynamically import to avoid circular deps and respect that
       // the services folder is owned by another agent.
