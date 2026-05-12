@@ -1,3 +1,4 @@
+import pLimit from 'p-limit';
 import { Octokit } from '@octokit/rest';
 
 export interface FetchedFile {
@@ -26,13 +27,8 @@ async function chunkedAll<T>(
   concurrency: number,
   fn: (item: T) => Promise<unknown>,
 ): Promise<PromiseSettledResult<unknown>[]> {
-  const results: PromiseSettledResult<unknown>[] = [];
-  for (let i = 0; i < items.length; i += concurrency) {
-    const chunk = items.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(chunk.map(fn));
-    results.push(...settled);
-  }
-  return results;
+  const limit = pLimit(concurrency);
+  return Promise.allSettled(items.map(item => limit(() => fn(item))));
 }
 
 export async function fetchRepoFiles(opts: {
