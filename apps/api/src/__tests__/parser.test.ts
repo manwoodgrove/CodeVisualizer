@@ -2,6 +2,30 @@ import { describe, it, expect } from 'vitest';
 import { parseFile } from '../services/parser/js-ts-parser.js';
 
 describe('parseFile', () => {
+  it('marks local bindings exported through named and aliased specifiers', () => {
+    const result = parseFile('src/exports.ts', `
+      const foo = 1;
+      function baz() {}
+      function bar() {}
+      function hidden() {}
+      export { foo as bar, baz };
+    `);
+    const exported = result.nodes.filter((node) => node.exported).map((node) => node.name);
+    expect(exported.sort()).toEqual(['baz', 'foo']);
+    expect(result.nodes.find((node) => node.name === 'bar')?.exported).toBe(false);
+    expect(result.nodes.find((node) => node.name === 'hidden')?.exported).toBe(false);
+  });
+
+  it.each([
+    ['function', 'export default function Named() {}', 'FUNCTION'],
+    ['class', 'export default class Named {}', 'CLASS'],
+    ['identifier', 'const Named = 1; export default Named;', 'VARIABLE'],
+  ])('tracks a default %s export', (_form, source, kind) => {
+    const result = parseFile('src/default.ts', `${source} function hidden() {}`);
+    expect(result.nodes.find((node) => node.name === 'Named' && node.kind === kind)?.exported).toBe(true);
+    expect(result.nodes.find((node) => node.name === 'hidden')?.exported).toBe(false);
+  });
+
   it('parses a class with methods and call edges', () => {
     const source = `
 export class Animal {
