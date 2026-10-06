@@ -1,9 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
 import type { GitHubRepoSummary } from '@cv/types'
-import { api } from '../api/client.js'
-import { connectJobSocket } from '../api/socket.js'
-import { useRepoStore } from '../store/repoStore.js'
-import { useGraphStore } from '../store/graphStore.js'
+import { useImportPanel } from '../hooks/useImportPanel.js'
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime()
@@ -17,81 +13,79 @@ function relativeTime(iso: string): string {
   return `${Math.floor(diffSec / 86400 / 365)}y ago`
 }
 
+function RepoRow({
+  repo,
+  busy,
+  disabled,
+  onClick,
+}: {
+  repo: GitHubRepoSummary
+  busy: boolean
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      className={`repo-row ${busy ? 'repo-row--busy' : ''}`}
+      onClick={onClick}
+      disabled={disabled}
+      title={repo.description ?? ''}
+    >
+      <div className="repo-row__head">
+        <span className="repo-row__name">{repo.fullName}</span>
+        {repo.private && <span className="repo-badge">private</span>}
+        {repo.fork && <span className="repo-badge repo-badge--muted">fork</span>}
+      </div>
+      {repo.description && <div className="repo-row__desc">{repo.description}</div>}
+      <div className="repo-row__meta">
+        {repo.language && <span>{repo.language}</span>}
+        <span>★ {repo.stars}</span>
+        <span>pushed {relativeTime(repo.pushedAt)}</span>
+        {busy && <span className="repo-row__status">importing...</span>}
+      </div>
+    </button>
+  )
+}
+
+function ImportProgress({
+  phase,
+  pct,
+  message,
+}: {
+  phase: string
+  pct: number
+  message?: string
+}) {
+  return (
+    <div className="mt-8">
+      <div className="flex-row" style={{ justifyContent: 'space-between' }}>
+        <span className="metric-label">{phase}</span>
+        <span className="metric-label">{pct}%</span>
+      </div>
+      {message && (
+        <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+          {message}
+        </div>
+      )}
+      <div className="progress-bar">
+        <div className="progress-bar__fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
 export function ImportPanel() {
-  const { importJob, setImportJob, clearImportJob, setActiveRepoId } = useRepoStore()
-  const setSnapshot = useGraphStore((s) => s.setSnapshot)
-
-  const [ghRepos, setGhRepos] = useState<GitHubRepoSummary[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [filter, setFilter] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busyRepo, setBusyRepo] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    api
-      .listGitHubRepos()
-      .then(({ repos }) => {
-        if (!cancelled) setGhRepos(repos)
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load repositories')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const filtered = useMemo(() => {
-    if (!ghRepos) return []
-    const q = filter.trim().toLowerCase()
-    if (!q) return ghRepos
-    return ghRepos.filter(
-      (r) =>
-        r.fullName.toLowerCase().includes(q) ||
-        (r.description && r.description.toLowerCase().includes(q)),
-    )
-  }, [ghRepos, filter])
-
-  async function startImport(repo: GitHubRepoSummary) {
-    setError(null)
-    setBusyRepo(repo.fullName)
-    try {
-      const { jobId, repoId } = await api.importRepo(repo.htmlUrl, repo.defaultBranch)
-      setImportJob({ jobId, phase: 'fetch', pct: 0 })
-
-      const unsub = connectJobSocket(jobId, {
-        onProgress: (ev) => {
-          setImportJob({ jobId, phase: ev.phase, pct: ev.pct, message: ev.message })
-        },
-        onDone: async (ev) => {
-          unsub()
-          setActiveRepoId(ev.repoId)
-          try {
-            const { snapshot } = await api.getGraph(ev.repoId)
-            setSnapshot(snapshot)
-          } catch {
-            /* non-fatal */
-          }
-          clearImportJob()
-          setBusyRepo(null)
-        },
-        onError: (ev) => {
-          unsub()
-          setError(ev.message)
-          clearImportJob()
-          setBusyRepo(null)
-        },
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed')
-      setBusyRepo(null)
-    }
-  }
+  const {
+    importJob,
+    ghRepos,
+    filtered,
+    loading,
+    filter,
+    setFilter,
+    error,
+    busyRepo,
+    startImport,
+  } = useImportPanel()
 
   return (
     <div className="panel panel--picker">
@@ -123,50 +117,23 @@ export function ImportPanel() {
       )}
 
       <div className="repo-list">
-        {filtered.map((repo) => {
-          const busy = busyRepo === repo.fullName
-          return (
-            <button
-              key={repo.fullName}
-              className={`repo-row ${busy ? 'repo-row--busy' : ''}`}
-              onClick={() => startImport(repo)}
-              disabled={busyRepo !== null}
-              title={repo.description ?? ''}
-            >
-              <div className="repo-row__head">
-                <span className="repo-row__name">{repo.fullName}</span>
-                {repo.private && <span className="repo-badge">private</span>}
-                {repo.fork && <span className="repo-badge repo-badge--muted">fork</span>}
-              </div>
-              {repo.description && (
-                <div className="repo-row__desc">{repo.description}</div>
-              )}
-              <div className="repo-row__meta">
-                {repo.language && <span>{repo.language}</span>}
-                <span>★ {repo.stars}</span>
-                <span>pushed {relativeTime(repo.pushedAt)}</span>
-                {busy && <span className="repo-row__status">importing...</span>}
-              </div>
-            </button>
-          )
-        })}
+        {filtered.map((repo) => (
+          <RepoRow
+            key={repo.fullName}
+            repo={repo}
+            busy={busyRepo === repo.fullName}
+            disabled={busyRepo !== null}
+            onClick={() => startImport(repo)}
+          />
+        ))}
       </div>
 
       {importJob && (
-        <div className="mt-8">
-          <div className="flex-row" style={{ justifyContent: 'space-between' }}>
-            <span className="metric-label">{importJob.phase}</span>
-            <span className="metric-label">{importJob.pct}%</span>
-          </div>
-          {importJob.message && (
-            <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
-              {importJob.message}
-            </div>
-          )}
-          <div className="progress-bar">
-            <div className="progress-bar__fill" style={{ width: `${importJob.pct}%` }} />
-          </div>
-        </div>
+        <ImportProgress
+          phase={importJob.phase}
+          pct={importJob.pct}
+          message={importJob.message}
+        />
       )}
     </div>
   )

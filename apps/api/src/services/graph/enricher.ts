@@ -16,9 +16,9 @@ export function enrichGraph(
   const nodeById = new Map<string, GraphNode>();
   for (const n of nodes) nodeById.set(n.id, n);
 
-  // Name -> filePath -> Node (for O(1) same-file CALL resolution)
+  // Name -> filePath -> node (for O(1) CALL/INHERITANCE resolution)
   const nodesByNameAndFile = new Map<string, Map<string, GraphNode>>();
-  // Name -> First seen Node (fallback when same-file match not found)
+  // Name -> first seen node (for fallback when no same-file match)
   const nodesByNameFallback = new Map<string, GraphNode>();
 
   for (const n of nodes) {
@@ -26,9 +26,14 @@ export function enrichGraph(
     if (!fileMap) {
       fileMap = new Map();
       nodesByNameAndFile.set(n.name, fileMap);
+    }
+    if (!fileMap.has(n.filePath)) {
+      fileMap.set(n.filePath, n);
+    }
+
+    if (!nodesByNameFallback.has(n.name)) {
       nodesByNameFallback.set(n.name, n);
     }
-    fileMap.set(n.filePath, n);
   }
 
   // Reset degrees
@@ -65,9 +70,11 @@ export function enrichGraph(
         const fileMap = nodesByNameAndFile.get(calleeName);
         if (fileMap) {
           const sameFile = sourceNode ? fileMap.get(sourceNode.filePath) : undefined;
-          const best = sameFile ?? nodesByNameFallback.get(calleeName)!;
-          resolvedTarget = best.id;
-          resolved = true;
+          const best = sameFile ?? nodesByNameFallback.get(calleeName);
+          if (best) {
+            resolvedTarget = best.id;
+            resolved = true;
+          }
         }
       }
 
@@ -92,14 +99,16 @@ export function enrichGraph(
         }
       }
 
-      // Fallback: name-based heuristic (prefer same-file match)
+      // Fallback: name-based heuristic
       if (!resolved) {
         const fileMap = nodesByNameAndFile.get(superName);
         if (fileMap) {
           const sameFile = sourceNode ? fileMap.get(sourceNode.filePath) : undefined;
-          const best = sameFile ?? nodesByNameFallback.get(superName)!;
-          resolvedTarget = best.id;
-          resolved = true;
+          const best = sameFile ?? nodesByNameFallback.get(superName);
+          if (best) {
+            resolvedTarget = best.id;
+            resolved = true;
+          }
         }
       }
 

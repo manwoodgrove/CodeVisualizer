@@ -1,6 +1,7 @@
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { nanoid } from 'nanoid';
+import type { FastifyInstance } from 'fastify';
 import type { Server } from 'socket.io';
 import type { GraphSnapshot } from '@cv/types';
 import { config } from '../config.js';
@@ -20,7 +21,10 @@ const connection = new Redis(config.redisUrl, {
 
 export const importQueue = new Queue<ImportJobData>('import', { connection });
 
-export function startImportWorker(io: Server): Worker<ImportJobData> {
+export function startImportWorker(
+  io: Server,
+  logger: FastifyInstance['log']
+): Worker<ImportJobData> {
   const workerConnection = new Redis(config.redisUrl, {
     maxRetriesPerRequest: null,
   });
@@ -29,6 +33,7 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
     'import',
     async (job) => {
       const { jobId, repoId, url, branch, token } = job.data;
+      const lastLoggedPct: Record<string, number> = {};
 
       // Dynamically import to avoid circular deps and respect that
       // the services folder is owned by another agent.
@@ -38,15 +43,19 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
         branch?: string;
         onProgress: (phase: 'fetch' | 'parse' | 'layout', pct: number) => void;
       };
+      const lastLoggedPct: Record<string, number> = {};
       const { runImport } = await import(
         '../services/pipeline/runImport.js'
       ) as { runImport: (ctx: ImportContext) => Promise<GraphSnapshot> };
 
-      console.log(`[import ${jobId}] start repoId=${repoId} url=${url} branch=${branch ?? 'default'}`);
+      logger.info(
+        { jobId, repoId, url, branch: branch ?? 'default' },
+        'Import started'
+      );
       await updateRepoStatus(repoId, { status: 'fetching' });
 
+      const lastLoggedPct: Record<string, number> = {};
       let snapshot: GraphSnapshot;
-      let lastLoggedPct: Record<string, number> = {};
       try {
         snapshot = await runImport({
           token,
@@ -54,22 +63,29 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
           branch,
           onProgress: (phase, pct) => {
             io.to(jobId).emit('job:progress', { jobId, phase, pct });
-            const prev = lastLoggedPct[phase] ?? -1;
-            if (pct === 0 || pct === 100 || pct - prev >= 20) {
-              console.log(`[import ${jobId}] ${phase} ${pct}%`);
+            if (shouldLogProgress(pct, lastLoggedPct[phase] ?? -1)) {
+              logger.info({ jobId, phase, pct }, 'Import progress');
               lastLoggedPct[phase] = pct;
             }
           },
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[import ${jobId}] FAILED: ${message}`);
+        logger.error({ jobId, err }, 'Import failed');
         await updateRepoStatus(repoId, { status: 'error', error: message });
         io.to(jobId).emit('job:error', { jobId, message });
         throw err;
       }
 
-      console.log(`[import ${jobId}] saving snapshot nodes=${snapshot.nodes.length} edges=${snapshot.edges.length}`);
+      logger.info(
+        {
+          jobId,
+          repoId,
+          nodes: snapshot.nodes.length,
+          edges: snapshot.edges.length,
+        },
+        'Saving snapshot'
+      );
       await saveSnapshot(repoId, snapshot);
       await updateRepoStatus(repoId, {
         status: 'ready',
@@ -78,16 +94,20 @@ export function startImportWorker(io: Server): Worker<ImportJobData> {
       });
 
       io.to(jobId).emit('job:done', { jobId, repoId });
-      console.log(`[import ${jobId}] DONE`);
+      logger.info({ jobId, repoId }, 'Import completed');
     },
     { connection: workerConnection, concurrency: 2 }
   );
 
   worker.on('failed', (job, err) => {
-    console.error(`[importWorker] job ${job?.id} failed:`, err);
+    logger.error({ jobId: job?.id, err }, 'Import job failed');
   });
 
   return worker;
+}
+
+function shouldLogProgress(pct: number, prevPct: number): boolean {
+  return pct === 0 || pct === 100 || pct - prevPct >= 20;
 }
 
 /** Convenience: enqueue an import job and return the generated jobId */

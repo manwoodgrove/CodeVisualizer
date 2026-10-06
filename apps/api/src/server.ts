@@ -89,7 +89,7 @@ async function build(): Promise<void> {
   });
 
   try {
-    startImportWorker(io);
+    startImportWorker(io, fastify.log);
   } catch (err) {
     fastify.log.warn({ err }, 'Import worker failed to start (Redis may be unavailable)');
   }

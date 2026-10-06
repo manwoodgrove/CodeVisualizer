@@ -34,8 +34,8 @@ const EMISSIVE_PS = /* glsl */ `
       float idle = 0.65 + 0.55 * t;
 
       // Fresnel rim — silhouette brightens against the dark background.
-      vec3 N = normalize(vNormalW);
-      vec3 V = normalize(view_position - vPositionW);
+      vec3 N = dVertexNormalW;
+      vec3 V = dViewDirW;
       float ndotv = clamp(dot(N, V), 0.0, 1.0);
       float fresnel = pow(1.0 - ndotv, 1.8);
       float rim = 0.45 + 1.40 * fresnel;
