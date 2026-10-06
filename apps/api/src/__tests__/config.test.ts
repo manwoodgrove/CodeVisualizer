@@ -23,7 +23,11 @@ describe('config', () => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('SESSION_SECRET', '');
 
-    const { config } = await import('../config.js');
+    const { config, logSessionSecretWarning } = await import('../config.js');
+    const logger = { warn: vi.fn() };
+    logSessionSecretWarning(logger);
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Sessions will not survive restarts'));
     expect(config.sessionSecret).toBeDefined();
     expect(config.sessionSecret.length).toBe(64);
   });
@@ -32,7 +36,10 @@ describe('config', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('SESSION_SECRET', 'my-super-secret-key-that-is-long-enough');
 
-    const { config } = await import('../config.js');
+    const { config, logSessionSecretWarning } = await import('../config.js');
+    const logger = { warn: vi.fn() };
+    logSessionSecretWarning(logger);
+    expect(logger.warn).not.toHaveBeenCalled();
     expect(config.sessionSecret).toBe('my-super-secret-key-that-is-long-enough');
   });
 });

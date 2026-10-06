@@ -36,6 +36,13 @@ if (!sessionSecret) {
   sessionSecret = crypto.randomBytes(32).toString('hex'); // 64 hex chars
 }
 
+/** Emit the development-only random-secret warning through the startup logger. */
+export function logSessionSecretWarning(logger: { warn: (message: string) => void }): void {
+  if (!parsed.SESSION_SECRET) {
+    logger.warn('SESSION_SECRET is not set — using a random secret. Sessions will not survive restarts.');
+  }
+}
+
 export const config = {
   port: parsed.PORT,
   host: parsed.HOST,

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
 import { Server as SocketIOServer } from 'socket.io';
-import { config } from './config.js';
+import { config, logSessionSecretWarning } from './config.js';
 import { sqlite } from './db/client.js';
 import githubAuth from './auth/github.js';
 import healthPlugin from './routes/health.js';
@@ -57,6 +57,8 @@ async function build(): Promise<void> {
           : undefined,
     },
   });
+
+  logSessionSecretWarning(fastify.log);
 
   await fastify.register(fastifyCookie, { secret: config.sessionSecret });
   await fastify.register(fastifyCors, {
