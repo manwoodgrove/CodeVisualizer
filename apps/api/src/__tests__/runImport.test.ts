@@ -24,7 +24,7 @@ describe('parseGithubUrl', () => {
   it('should reject malicious or malformed inputs', () => {
     // Path traversal or suspicious characters in owner/repo should be rejected
     expect(() => parseGithubUrl('https://github.com/../repo')).toThrow(/Invalid GitHub owner/);
-    expect(() => parseGithubUrl('https://github.com/owner/repo/../../etc/passwd')).toEqual({ owner: 'owner', repo: 'repo' });
+    expect(parseGithubUrl('https://github.com/owner/repo/../../etc/passwd')).toEqual({ owner: 'owner', repo: 'repo' });
     expect(() => parseGithubUrl('https://github.com/owner/..')).toThrow(/Invalid GitHub owner/);
     expect(() => parseGithubUrl('https://github.com/owner/.')).toThrow(/Invalid GitHub owner/);
   });
